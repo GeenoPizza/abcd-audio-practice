@@ -75,6 +75,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
   const [showInstallButton, setShowInstallButton] = useState(false);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -306,6 +307,21 @@ const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
     
     countdownTimeoutsRef.current = [t1, t2, t3, t4, t5, t6, finalTimeout];
   };
+  const handlePreviewLoop = () => {
+  const audio = audioRef.current;
+  if (!audio || isRunning) return;
+  
+  if (isPreviewPlaying) {
+    audio.pause();
+    setIsPreviewPlaying(false);
+  } else {
+    const effectiveStart = useFullTrack ? 0 : loopStart;
+    audio.currentTime = effectiveStart;
+    audio.playbackRate = 1; // Preview sempre a velocità normale
+    audio.play();
+    setIsPreviewPlaying(true);
+  }
+};
   useEffect(() => {
   const handleBeforeInstallPrompt = (e: Event) => {
     e.preventDefault();
@@ -322,6 +338,10 @@ const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
   const handleStartStop = () => {
     if (!audioFile) return;
+    if (isPreviewPlaying) {
+  audioRef.current?.pause();
+  setIsPreviewPlaying(false);
+}
     if (isInBreak && countdownTimeoutsRef.current.length > 0) return;
 
     if (isRunning) {
@@ -746,9 +766,20 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                   className="space-y-5 rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)] backdrop-blur"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Waveform & Loop</span>
-                    <Scissors size={16} className="text-neutral-500" />
-                  </div>
+  <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Waveform & Loop</span>
+  <button
+    onClick={handlePreviewLoop}
+    disabled={isRunning}
+    className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+      isPreviewPlaying
+        ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+        : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
+    } disabled:opacity-40`}
+  >
+    {isPreviewPlaying ? <Pause size={14} /> : <Play size={14} />}
+    {isPreviewPlaying ? 'Stop' : 'Preview'}
+  </button>
+</div>
 
                   {/* Waveform Equalizer Style */}
                   <div 
