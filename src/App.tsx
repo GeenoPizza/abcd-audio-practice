@@ -549,7 +549,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
       <div className="pointer-events-none absolute -bottom-32 left-[12%] h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle,_rgba(96,129,118,0.18),_transparent_68%)] blur-3xl" />
       <div className="pointer-events-none absolute -top-48 right-[-10%] h-[620px] w-[620px] rounded-full bg-[radial-gradient(circle,_rgba(71,85,105,0.16),_transparent_70%)] blur-3xl" />
 
-      <div className="relative z-10 mx-auto w-full max-w-6xl px-8 pb-16 pt-10">
+      <div className="relative z-10 mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8 pb-16 pt-10">
         <audio ref={audioRef} src={audioFile || undefined} />
 
         <motion.header
@@ -645,7 +645,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
               ))}
             </motion.div>
 
-            <div className="grid gap-8 lg:grid-cols-[1fr_400px]">
+            <div className="grid gap-6 lg:gap-8 lg:grid-cols-[1fr_400px]">
               <div className="space-y-8">
                 <motion.section
                   variants={scaleIn}
