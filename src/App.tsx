@@ -194,7 +194,8 @@ const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
     if (!audio || !audioFile) return;
 
     const handleTimeUpdate = () => {
-      setCurrentTime(audio.currentTime);
+  setCurrentTime(audio.currentTime);
+  requestAnimationFrame(() => setCurrentTime(audio.currentTime)); // <-- AGGIUNGI QUESTA
       
       const effectiveEnd = useFullTrack ? audioDuration : loopEnd;
       if (audio.currentTime >= effectiveEnd - 0.1) {
@@ -560,7 +561,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
           animate="visible"
           className="flex flex-col gap-5 text-center"
         >
-          <h1 className="text-5xl font-light leading-tight text-neutral-100">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-light leading-tight text-neutral-100">
             <span className="font-semibold text-[#88a7d0]">A</span>
             <span className="font-semibold text-[#c2b68a]">B</span>
             <span className="font-semibold text-[#d9a88a]">C</span>
@@ -777,7 +778,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
     background: isInLoop && isPassed
       ? `linear-gradient(to top, ${phaseStyles[currentPhase].accent}, ${hexToRgba(phaseStyles[currentPhase].accent, 0.4)})`
       : isInLoop
-      ? `linear-gradient(to top, ${hexToRgba(phaseStyles[currentPhase].accent, 0.25)}, ${hexToRgba(phaseStyles[currentPhase].accent, 0.1)})`
+? `linear-gradient(to top, ${hexToRgba(phaseStyles[currentPhase].accent, 0.5)}, ${hexToRgba(phaseStyles[currentPhase].accent, 0.3)})`
       : 'linear-gradient(to top, rgba(255,255,255,0.15), rgba(255,255,255,0.05))',
     boxShadow: isInLoop && isPassed
       ? `0 0 20px ${hexToRgba(phaseStyles[currentPhase].accent, 0.7)}, 0 0 40px ${hexToRgba(phaseStyles[currentPhase].accent, 0.3)}`
