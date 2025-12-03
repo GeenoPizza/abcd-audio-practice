@@ -549,7 +549,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
       <div className="pointer-events-none absolute -bottom-32 left-[12%] h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle,_rgba(96,129,118,0.18),_transparent_68%)] blur-3xl" />
       <div className="pointer-events-none absolute -top-48 right-[-10%] h-[620px] w-[620px] rounded-full bg-[radial-gradient(circle,_rgba(71,85,105,0.16),_transparent_70%)] blur-3xl" />
 
-      <div className="relative z-10 mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8 pb-16 pt-10">
+      <div className="relative z-10 mx-auto w-full max-w-6xl px-8 pb-16 pt-10">
         <audio ref={audioRef} src={audioFile || undefined} />
 
         <motion.header
@@ -592,7 +592,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
             variants={scaleIn}
             initial="hidden"
             animate="visible"
-            className="mt-14 rounded-3xl border border-white/10 bg-white/5 p-16 text-center shadow-[0_32px_70px_rgba(8,10,12,0.35)] backdrop-blur-xl"
+            className="mt-14 rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-16 text-center shadow-[0_32px_70px_rgba(8,10,12,0.35)] backdrop-blur-xl"
           >
             <label className="mx-auto mb-8 flex h-32 w-32 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-[#3e5c55]/20 to-[#2e4741]/20 transition hover:border-white/20 hover:shadow-xl">
   <Upload size={64} className="text-[#5dda9d]" />
@@ -645,13 +645,13 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
               ))}
             </motion.div>
 
-            <div className="grid gap-6 lg:gap-8 lg:grid-cols-[1fr_400px]">
+            <div className="grid gap-8 lg:grid-cols-[1fr_400px]">
               <div className="space-y-8">
                 <motion.section
                   variants={scaleIn}
                   initial="hidden"
                   animate="visible"
-                  className="overflow-hidden rounded-[32px] border border-white/8 bg-white/5 p-8 shadow-[0_32px_70px_rgba(8,10,12,0.35)] backdrop-blur-xl"
+                  className="overflow-hidden rounded-2xl sm:rounded-[32px] border border-white/8 bg-white/5 p-4 sm:p-6 lg:p-8 shadow-[0_32px_70px_rgba(8,10,12,0.35)] backdrop-blur-xl"
                 >
                   <AnimatePresence mode="wait">
                     {isInBreak ? (
@@ -740,7 +740,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                   variants={scaleIn}
                   initial="hidden"
                   animate="visible"
-                  className="space-y-5 rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)] backdrop-blur"
+                  className="space-y-5 rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)] backdrop-blur"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Waveform & Loop</span>
@@ -920,7 +920,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                   variants={scaleIn}
                   initial="hidden"
                   animate="visible"
-                  className="space-y-5 rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)] backdrop-blur"
+                  className="space-y-5 rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)] backdrop-blur"
                 >
                   <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Controlli</span>
                   
@@ -999,7 +999,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                   variants={scaleIn}
                   initial="hidden"
                   animate="visible"
-                  className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(6,8,10,0.35)] backdrop-blur"
+                  className="rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(6,8,10,0.35)] backdrop-blur"
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -1026,7 +1026,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                   variants={scaleIn}
                   initial="hidden"
                   animate="visible"
-                  className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(6,8,10,0.35)] backdrop-blur"
+                  className="rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(6,8,10,0.35)] backdrop-blur"
                 >
                   <div className="flex items-center justify-between">
                     <div>
@@ -1050,7 +1050,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                   variants={scaleIn}
                   initial="hidden"
                   animate="visible"
-                  className="space-y-5 rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)] backdrop-blur"
+                  className="space-y-5 rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)] backdrop-blur"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Overview Sezioni</span>
@@ -1080,7 +1080,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                   variants={scaleIn}
                   initial="hidden"
                   animate="visible"
-                  className="rounded-3xl border border-white/10 bg-[#18181b] p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)]"
+                  className="rounded-2xl sm:rounded-3xl border border-white/10 bg-[#18181b] p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)]"
                 >
                   <button
                     onClick={() => {
@@ -1199,7 +1199,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                   variants={scaleIn}
                   initial="hidden"
                   animate="visible"
-                  className="rounded-3xl border border-white/10 bg-[#18181b] p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)]"
+                  className="rounded-2xl sm:rounded-3xl border border-white/10 bg-[#18181b] p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)]"
                 >
                   <button
                     onClick={() => {
