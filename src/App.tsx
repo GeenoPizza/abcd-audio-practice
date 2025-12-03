@@ -647,7 +647,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
               ))}
             </motion.div>
 
-            <div className="grid gap-4 lg:grid-cols-[1fr_380px]">
+            <div className="grid gap-4 grid-cols-1 lg:grid-cols-[1fr_minmax(300px,400px)]">
               <div className="space-y-8">
                 <motion.section
                   variants={scaleIn}
