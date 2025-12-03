@@ -544,12 +544,12 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
 };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#0b0d0e] text-white flex justify-center">
+    <div className="relative min-h-screen overflow-x-hidden bg-[#0b0d0e] text-white flex justify-center">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(156,176,196,0.12),_transparent_62%)]" />
       <div className="pointer-events-none absolute -bottom-32 left-[12%] h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle,_rgba(96,129,118,0.18),_transparent_68%)] blur-3xl" />
       <div className="pointer-events-none absolute -top-48 right-[-10%] h-[620px] w-[620px] rounded-full bg-[radial-gradient(circle,_rgba(71,85,105,0.16),_transparent_70%)] blur-3xl" />
 
-      <div className="relative z-10 mx-auto w-full px-4 pb-16 pt-10 sm:max-w-2xl sm:px-6
+      <div className="relative z-10 mx-auto w-full max-w-full px-4 pb-16 pt-10 sm:max-w-2xl sm:px-6
                   md:max-w-4xl
                   lg:max-w-6xl lg:px-6 mx-auto">
         <audio ref={audioRef} src={audioFile || undefined} />
