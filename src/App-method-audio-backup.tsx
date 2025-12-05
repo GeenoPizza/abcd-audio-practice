@@ -2,119 +2,6 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { Play, Pause, SkipForward, RotateCcw, Upload, Scissors, RefreshCcw, Volume2, Target, Music, X, ChevronDown, ChevronUp, Plus, Minus, Info, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// IndexedDB Setup
-const DB_NAME = 'ABCDAudioDB';
-const DB_VERSION = 1;
-const STORE_NAME = 'audioFiles';
-
-interface IndexedDBFile {
-  id: string;
-  name: string;
-  blob: Blob;
-  duration: number;
-  loopStart: number;
-  loopEnd: number;
-  useFullTrack: boolean;
-  waveform: number[];
-  timestamp: number;
-}
-
-const openDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-      }
-    };
-  });
-};
-
-const saveFileToIndexedDB = async (fileData: IndexedDBFile): Promise<void> => {
-  console.log('💾 saveFileToIndexedDB chiamata con:', fileData.name);
-  const db = await openDB();
-  console.log('✅ Database aperto');
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.put(fileData);
-    
-    request.onsuccess = () => {
-      console.log('✅ File salvato con successo in IndexedDB!');
-      resolve();
-    };
-    
-    request.onerror = () => {
-      console.error('❌ Errore salvataggio:', request.error);
-      reject(request.error);
-    };
-  });
-};
-
-const getFileFromIndexedDB = async (id: string): Promise<IndexedDBFile | null> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(id);
-    
-    request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-const getAllFilesFromIndexedDB = async (): Promise<IndexedDBFile[]> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.getAll();
-    
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-const deleteFileFromIndexedDB = async (id: string): Promise<void> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.delete(id);
-    
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-};
-
-const clearAllIndexedDB = async (): Promise<void> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.clear();
-    
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-};
-
-const getStorageEstimate = async (): Promise<{ usage: number; quota: number }> => {
-  if ('storage' in navigator && 'estimate' in navigator.storage) {
-    const estimate = await navigator.storage.estimate();
-    return {
-      usage: estimate.usage || 0,
-      quota: estimate.quota || 0
-    };
-  }
-  return { usage: 0, quota: 0 };
-};
-
 type PhaseKey = 'A' | 'B' | 'C' | 'D';
 
 type PhaseStyle = {
@@ -176,23 +63,8 @@ function App() {
   const [countdownBeat, setCountdownBeat] = useState(0);
   const [volume, setVolume] = useState(0.85);
   
-  type AudioFileData = {
-  id: string;
-  url: string;
-  name: string;
-  duration: number;
-  loopStart: number;
-  loopEnd: number;
-  useFullTrack: boolean;
-  waveform: number[];
-  fileHash?: string; // Per smart matching
-  timestamp: number;
-};
-
-const [audioFiles, setAudioFiles] = useState<AudioFileData[]>([]);
-const [currentFileId, setCurrentFileId] = useState<string | null>(null);
-const [audioFile, setAudioFile] = useState<string | null>(null);
-const [audioFileName, setAudioFileName] = useState<string>('');
+  const [audioFile, setAudioFile] = useState<string | null>(null);
+  const [audioFileName, setAudioFileName] = useState<string>('');
   const [audioDuration, setAudioDuration] = useState(0);
   const [loopStart, setLoopStart] = useState(0);
   const [loopEnd, setLoopEnd] = useState(0);
@@ -203,14 +75,6 @@ const [audioFileName, setAudioFileName] = useState<string>('');
   const [showSettings, setShowSettings] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
   const [showInstallButton, setShowInstallButton] = useState(false);
-  const [storageUsage, setStorageUsage] = useState(0);
-const [storageQuota, setStorageQuota] = useState(0);
-const [showStorageModal, setShowStorageModal] = useState(false);
-const [importPendingFiles, setImportPendingFiles] = useState<any[]>([]);
-const [showImportModal, setShowImportModal] = useState(false);
-const [importMatchedFiles, setImportMatchedFiles] = useState<Record<string, AudioFileData>>({});
-const [sessionName, setSessionName] = useState('');
-const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   
@@ -297,369 +161,21 @@ const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-  const file = event.target.files?.[0];
-  if (!file || !file.type.startsWith('audio/')) return;
-  
-  const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  const url = URL.createObjectURL(file);
-  
-  setIsLoadingWaveform(true);
-  
-  try {
-    // Genera waveform
-    let waveformData: number[] = [];
-    const arrayBuffer = await file.arrayBuffer();
-    
-    if (!audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-    
-    const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
-    const rawData = audioBuffer.getChannelData(0);
-    const samples = 64;
-    const blockSize = Math.floor(rawData.length / samples);
-    const filteredData: number[] = [];
-    
-    for (let i = 0; i < samples; i++) {
-      let sum = 0;
-      for (let j = 0; j < blockSize; j++) {
-        sum += Math.abs(rawData[i * blockSize + j]);
-      }
-      filteredData.push(sum / blockSize);
-    }
-    
-    const max = Math.max(...filteredData);
-    waveformData = filteredData.map(n => n / max);
-    
-    // Ottieni duration
-    const tempAudio = new Audio(url);
-    await new Promise((resolve) => {
-      tempAudio.addEventListener('loadedmetadata', resolve, { once: true });
-    });
-    
-    const newFile: AudioFileData = {
-      id,
-      url,
-      name: file.name,
-      duration: tempAudio.duration,
-      loopStart: 0,
-      loopEnd: tempAudio.duration,
-      useFullTrack: true,
-      waveform: waveformData,
-      timestamp: Date.now()
-    };
-    console.log('🔵 Tentativo salvataggio in IndexedDB...');
-    // Salva in IndexedDB
-    await saveFileToIndexedDB({
-      id,
-      name: file.name,
-      blob: file,
-      duration: tempAudio.duration,
-      loopStart: 0,
-      loopEnd: tempAudio.duration,
-      useFullTrack: true,
-      waveform: waveformData,
-      timestamp: Date.now()
-    });
-    console.log('✅ File salvato in IndexedDB!', file.name);
-    setAudioFiles(prev => [...prev, newFile]);
-    loadFile(newFile);
-    await updateStorageInfo();
-    
-  } catch (error) {
-    console.error('Error uploading file:', error);
-    alert('Errore nel caricamento del file');
-  } finally {
-    setIsLoadingWaveform(false);
-  }
-  
-  event.target.value = '';
-};
-
-const loadFile = (fileData: AudioFileData) => {
-  handleReset();
-  setCurrentFileId(fileData.id);
-  setAudioFile(fileData.url);
-  setAudioFileName(fileData.name);
-  setAudioDuration(fileData.duration);
-  setLoopStart(fileData.loopStart);
-  setLoopEnd(fileData.loopEnd);
-  setUseFullTrack(fileData.useFullTrack);
-  setWaveformData(fileData.waveform);
-};
-
-const removeFile = async (id: string) => {
-  try {
-    await deleteFileFromIndexedDB(id);
-    
-    setAudioFiles(prev => {
-      const updated = prev.filter(f => f.id !== id);
-      if (currentFileId === id) {
-        if (updated.length > 0) {
-          loadFile(updated[0]);
-        } else {
-          clearAudioFile();
-        }
-      }
-      return updated;
-    });
-    
-    await updateStorageInfo();
-  } catch (error) {
-    console.error('Error removing file:', error);
-  }
-};
-
-const exportSession = () => {
-  const name = prompt('Nome della playlist:', sessionName || 'La mia playlist ABCD');
-  if (!name) return;
-  
-  setSessionName(name);
-  
-  const sessionData = {
-    version: '2.0',
-    playlistName: name,
-    exportDate: new Date().toISOString(),
-    files: audioFiles.map(f => ({
-      id: f.id,
-      name: f.name,
-      duration: f.duration,
-      loopStart: f.loopStart,
-      loopEnd: f.loopEnd,
-      useFullTrack: f.useFullTrack,
-      timestamp: f.timestamp
-    })),
-    phaseRepetitions,
-    phasePercentages,
-    currentFileId
-  };
-  
-  const blob = new Blob([JSON.stringify(sessionData, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-};
-
-const importSession = async (event: React.ChangeEvent<HTMLInputElement>) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    try {
-      const text = e.target?.result as string;
-      const data = JSON.parse(text);
+    const file = event.target.files?.[0];
+    if (file && file.type.startsWith('audio/')) {
+      const url = URL.createObjectURL(file);
+      setAudioFile(url);
+      setAudioFileName(file.name);
+      setIsRunning(false);
+      setIsPaused(false);
+      setCurrentPhase('A');
+      setCurrentRepetition(0);
+      setTotalTimeRemaining(0);
+      setWaveformData([]);
       
-      if (!data.version || !data.files) {
-        alert('File playlist non valido ❌');
-        return;
-      }
-      
-      // Carica settings globali
-      setPhaseRepetitions(data.phaseRepetitions || defaultPhaseDurations);
-      setPhasePercentages(data.phasePercentages || defaultPhasePercentages);
-      setSessionName(data.playlistName || 'Playlist importata');
-      
-      // Smart matching con IndexedDB
-      const existingFiles = await getAllFilesFromIndexedDB();
-      const matched: Record<string, AudioFileData> = {};
-      const pending: any[] = [];
-      
-      for (const importedFile of data.files) {
-        // Cerca match per nome file
-        const matchedDB = existingFiles.find(f => f.name === importedFile.name);
-        
-        if (matchedDB) {
-          // File già presente in IndexedDB
-          const url = URL.createObjectURL(matchedDB.blob);
-          matched[importedFile.id] = {
-            id: importedFile.id,
-            url,
-            name: matchedDB.name,
-            duration: matchedDB.duration,
-            loopStart: importedFile.loopStart,
-            loopEnd: importedFile.loopEnd,
-            useFullTrack: importedFile.useFullTrack,
-            waveform: matchedDB.waveform,
-            timestamp: Date.now()
-          };
-        } else {
-          // File mancante
-          pending.push(importedFile);
-        }
-      }
-      
-      setImportMatchedFiles(matched);
-      setImportPendingFiles(pending);
-      
-      // Se tutti i file sono già presenti, carica direttamente
-      if (pending.length === 0) {
-        const allFiles = Object.values(matched);
-        setAudioFiles(allFiles);
-        
-        if (data.currentFileId && matched[data.currentFileId]) {
-          loadFile(matched[data.currentFileId]);
-        } else if (allFiles.length > 0) {
-          loadFile(allFiles[0]);
-        }
-        
-        alert(`✅ Playlist caricata!\n\nTutti i ${allFiles.length} file erano già presenti.`);
-      } else {
-        // Mostra modal per file mancanti
-        setShowImportModal(true);
-      }
-      
-    } catch (e) {
-      alert('Errore nel caricamento ❌');
-      console.error(e);
+      await generateWaveform(file);
     }
   };
-  
-  reader.readAsText(file);
-  event.target.value = '';
-};
-
-const handleReloadFileForImport = async (pendingFile: any, event: React.ChangeEvent<HTMLInputElement>) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  
-  // Verifica nome
-  if (file.name !== pendingFile.name) {
-    const confirm = window.confirm(
-      `Il file selezionato (${file.name}) non corrisponde al nome atteso (${pendingFile.name}).\n\nVuoi caricarlo comunque?`
-    );
-    if (!confirm) {
-      event.target.value = '';
-      return;
-    }
-  }
-  
-  try {
-    const id = pendingFile.id;
-    const url = URL.createObjectURL(file);
-    
-    // Genera waveform
-    setIsLoadingWaveform(true);
-    let waveformData: number[] = [];
-    
-    const arrayBuffer = await file.arrayBuffer();
-    if (!audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-    
-    const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
-    const rawData = audioBuffer.getChannelData(0);
-    const samples = 64;
-    const blockSize = Math.floor(rawData.length / samples);
-    const filteredData: number[] = [];
-    
-    for (let i = 0; i < samples; i++) {
-      let sum = 0;
-      for (let j = 0; j < blockSize; j++) {
-        sum += Math.abs(rawData[i * blockSize + j]);
-      }
-      filteredData.push(sum / blockSize);
-    }
-    
-    const max = Math.max(...filteredData);
-    waveformData = filteredData.map(n => n / max);
-    
-    const tempAudio = new Audio(url);
-    await new Promise((resolve) => {
-      tempAudio.addEventListener('loadedmetadata', resolve, { once: true });
-    });
-    
-    const completeImport = () => {
-  const allFiles = Object.values(importMatchedFiles);
-  setAudioFiles(allFiles);
-  
-  if (allFiles.length > 0) {
-    loadFile(allFiles[0]);
-  }
-  
-  setShowImportModal(false);
-  setImportPendingFiles([]);
-  setImportMatchedFiles({});
-  
-  const matchedCount = allFiles.length;
-  const totalCount = matchedCount + importPendingFiles.filter(
-    f => !importMatchedFiles[f.id]
-  ).length;
-  
-  alert(`✅ Playlist caricata!\n\n${matchedCount}/${totalCount} file trovati.`);
-};
-    
-    const newFile: AudioFileData = {
-      id,
-      url,
-      name: file.name,
-      duration: tempAudio.duration,
-      loopStart: pendingFile.loopStart,
-      loopEnd: pendingFile.loopEnd,
-      useFullTrack: pendingFile.useFullTrack,
-      waveform: waveformData,
-      timestamp: Date.now()
-    };
-    
-    // Salva in IndexedDB
-    await saveFileToIndexedDB({
-      id,
-      name: file.name,
-      blob: file,
-      duration: tempAudio.duration,
-      loopStart: pendingFile.loopStart,
-      loopEnd: pendingFile.loopEnd,
-      useFullTrack: pendingFile.useFullTrack,
-      waveform: waveformData,
-      timestamp: Date.now()
-    });
-    
-    setImportMatchedFiles(prev => ({ ...prev, [id]: newFile }));
-    setIsLoadingWaveform(false);
-    await updateStorageInfo();
-    
-  } catch (error) {
-    console.error('Error reloading file:', error);
-    alert('Errore nel caricamento del file');
-    setIsLoadingWaveform(false);
-  }
-  
-  event.target.value = '';
-};
-
-// ✅ QUI FUORI, COME FUNZIONE SEPARATA
-const completeImport = () => {
-  const allFiles = Object.values(importMatchedFiles);
-  setAudioFiles(allFiles);
-  
-  if (allFiles.length > 0) {
-    loadFile(allFiles[0]);
-  }
-  
-  setShowImportModal(false);
-  setImportPendingFiles([]);
-  setImportMatchedFiles({});
-  
-  const matchedCount = allFiles.length;
-  const totalCount = matchedCount + importPendingFiles.filter(
-    f => !importMatchedFiles[f.id]
-  ).length;
-  
-  alert(`✅ Playlist caricata!\n\n${matchedCount}/${totalCount} file trovati.`);
-};
-
-useEffect(() => {
-  if (currentFileId && audioFile) {
-    setAudioFiles(prev => prev.map(f => 
-      f.id === currentFileId 
-        ? { ...f, loopStart, loopEnd, useFullTrack, waveform: waveformData }
-        : f
-    ));
-  }
-}, [loopStart, loopEnd, useFullTrack, currentFileId]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -673,93 +189,6 @@ useEffect(() => {
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
     return () => audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
   }, [audioFile]);
-  
-  // Carica file da IndexedDB all'avvio
-useEffect(() => {
-  const loadFiles = async () => {
-    try {
-      const files = await getAllFilesFromIndexedDB();
-      
-      const loadedFiles: AudioFileData[] = await Promise.all(
-        files.map(async (f) => {
-          const url = URL.createObjectURL(f.blob);
-          return {
-            id: f.id,
-            url,
-            name: f.name,
-            duration: f.duration,
-            loopStart: f.loopStart,
-            loopEnd: f.loopEnd,
-            useFullTrack: f.useFullTrack,
-            waveform: f.waveform,
-            timestamp: f.timestamp
-          };
-        })
-      );
-      
-      setAudioFiles(loadedFiles);
-      
-      // Carica ultimo file usato
-      if (loadedFiles.length > 0) {
-        const lastUsed = loadedFiles.sort((a, b) => b.timestamp - a.timestamp)[0];
-        loadFile(lastUsed);
-      }
-      
-      // Aggiorna storage usage
-      updateStorageInfo();
-    } catch (error) {
-      console.error('Error loading files from IndexedDB:', error);
-    }
-  };
-  
-  loadFiles();
-}, []);
-
-// Aggiorna storage info periodicamente
-const updateStorageInfo = async () => {
-  try {
-    const { usage, quota } = await getStorageEstimate();
-    setStorageUsage(usage);
-    setStorageQuota(quota);
-  } catch (error) {
-    console.error('Error getting storage info:', error);
-  }
-};
-
-// Salva modifiche loop in IndexedDB
-useEffect(() => {
-  if (!currentFileId || !audioFile) return;
-  
-  const saveChanges = async () => {
-    try {
-      const currentFile = audioFiles.find(f => f.id === currentFileId);
-      if (!currentFile) return;
-      
-      const response = await fetch(currentFile.url);
-      const blob = await response.blob();
-      
-      await saveFileToIndexedDB({
-        id: currentFileId,
-        name: audioFileName,
-        blob,
-        duration: audioDuration,
-        loopStart,
-        loopEnd,
-        useFullTrack,
-        waveform: waveformData,
-        timestamp: Date.now()
-      });
-      
-      console.log('✅ Changes saved to IndexedDB');
-    } catch (error) {
-      console.error('Save error:', error);
-    }
-  };
-  
-  const timeoutId = setTimeout(saveChanges, 3000); // Salva dopo 3s di inattività
-  
-  return () => clearTimeout(timeoutId);
-}, [loopStart, loopEnd, useFullTrack, currentFileId, audioFiles]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1053,37 +482,17 @@ useEffect(() => {
   };
 
   const clearAudioFile = () => {
-  handleReset();
-  setAudioFiles([]);
-  setCurrentFileId(null);
-  setAudioFile(null);
-  setAudioFileName('');
-  setAudioDuration(0);
-  setLoopStart(0);
-  setLoopEnd(0);
-  setCurrentTime(0);
-  setWaveformData([]);
-  setUseFullTrack(true);
-  setCurrentRepetition(0);
-};
-
-const clearAllStorage = async () => {
-  const confirm = window.confirm(
-    '⚠️ ATTENZIONE!\n\nQuesto cancellerà TUTTI i file audio salvati nel browser.\n\nVuoi continuare?'
-  );
-  
-  if (!confirm) return;
-  
-  try {
-    await clearAllIndexedDB();
-    clearAudioFile();
-    await updateStorageInfo();
-    alert('✅ Storage pulito con successo!');
-  } catch (error) {
-    console.error('Error clearing storage:', error);
-    alert('❌ Errore nella pulizia dello storage');
-  }
-};
+    handleReset();
+    setAudioFile(null);
+    setAudioFileName('');
+    setAudioDuration(0);
+    setLoopStart(0);
+    setLoopEnd(0);
+    setCurrentTime(0);
+    setWaveformData([]);
+    setUseFullTrack(true);
+    setCurrentRepetition(0);
+  };
 
 const adjustBPM = (delta: number) => {
     // BPM non è usato in questa app audio, ma manteniamo la logica per durate
@@ -1156,12 +565,12 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
 };
 
   return (
-    <div className="fixed inset-0 overflow-x-hidden overflow-y-auto bg-[#0b0d0e] text-white">
+    <div className="relative min-h-screen overflow-x-hidden bg-[#0b0d0e] text-white flex justify-center">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(156,176,196,0.12),_transparent_62%)]" />
       <div className="pointer-events-none absolute -bottom-32 left-[12%] h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle,_rgba(96,129,118,0.18),_transparent_68%)] blur-3xl" />
       <div className="pointer-events-none absolute -top-48 right-[-10%] h-[620px] w-[620px] rounded-full bg-[radial-gradient(circle,_rgba(71,85,105,0.16),_transparent_70%)] blur-3xl" />
 
-      <div className="relative z-10 mx-auto w-full max-w-full min-h-full px-4 pb-16 pt-10 sm:max-w-2xl sm:px-6
+      <div className="relative z-10 mx-auto w-full max-w-full px-4 pb-16 pt-10 sm:max-w-2xl sm:px-6
                   md:max-w-4xl
                   lg:max-w-6xl lg:px-6 mx-auto">
         <audio ref={audioRef} src={audioFile || undefined} />
@@ -1222,29 +631,16 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
               Supporta MP3, WAV, OGG e altri formati audio.<br/>
               Scegli un brano o un esercizio da studiare.
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 items-center justify-center">
-  <label className="inline-flex cursor-pointer items-center gap-3 rounded-full bg-gradient-to-r from-[#3e5c55] to-[#2e4741] px-8 py-4 text-lg font-semibold shadow-lg transition hover:shadow-xl">
-    <Upload size={20} />
-    Carica File Audio
-    <input
-      type="file"
-      accept="audio/*"
-      onChange={handleFileUpload}
-      className="hidden"
-    />
-  </label>
-  
-  <label className="inline-flex cursor-pointer items-center gap-3 rounded-full border-2 border-purple-500/40 bg-purple-500/10 px-8 py-4 text-lg font-semibold text-purple-300 shadow-lg transition hover:border-purple-400 hover:bg-purple-500/20">
-    <Download size={20} />
-    Carica Sessione
-    <input
-      type="file"
-      accept=".json"
-      onChange={importSession}
-      className="hidden"
-    />
-  </label>
-</div>
+            <label className="inline-flex cursor-pointer items-center gap-3 rounded-full bg-gradient-to-r from-[#3e5c55] to-[#2e4741] px-8 py-4 text-lg font-semibold shadow-lg transition hover:shadow-xl">
+              <Upload size={20} />
+              Seleziona File Audio
+              <input
+                type="file"
+                accept="audio/*"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </label>
           </motion.div>
           
         ) : (
@@ -1398,72 +794,23 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
   ) : waveformData.length > 0 ? (
     <div className="relative flex h-full items-center justify-center gap-1 px-4">
       {waveformData.map((amplitude, index) => {
-  const isInLoop = 
-    (index / waveformData.length) * audioDuration >= (useFullTrack ? 0 : loopStart) &&
-    (index / waveformData.length) * audioDuration <= (useFullTrack ? audioDuration : loopEnd);
-  const isPassed = (index / waveformData.length) * audioDuration <= currentTime;
-  
-  // Calcola il colore gradiente ABCD per la preview (quando non è running)
-const getPreviewGradientColor = () => {
-  if (isRunning) return null; // Se sta suonando, usa la logica normale
-  
-  const position = (index / waveformData.length) * 2; // 0 a 2 (per ripetere due volte)
-  const normalizedPos = position % 1; // Posizione nel ciclo corrente (0 a 1)
-  
-  const colors = [
-    phaseStyles['A'].accent, // blu
-    phaseStyles['B'].accent, // giallo
-    phaseStyles['C'].accent, // rosso
-    phaseStyles['D'].accent  // verde
-  ];
-  
-  // Determina tra quali due colori interpolare
-  const colorIndex = Math.floor(normalizedPos * 4);
-  const nextColorIndex = (colorIndex + 1) % 4;
-  const localPos = (normalizedPos * 4) % 1; // Posizione tra i due colori (0 a 1)
-  
-  // Interpola tra due colori adiacenti
-  const color1 = colors[colorIndex];
-  const color2 = colors[nextColorIndex];
-  
-  // Estrai RGB dai colori hex
-  const hex1 = color1.replace('#', '');
-  const hex2 = color2.replace('#', '');
-  
-  const r1 = parseInt(hex1.substr(0, 2), 16);
-  const g1 = parseInt(hex1.substr(2, 2), 16);
-  const b1 = parseInt(hex1.substr(4, 2), 16);
-  
-  const r2 = parseInt(hex2.substr(0, 2), 16);
-  const g2 = parseInt(hex2.substr(2, 2), 16);
-  const b2 = parseInt(hex2.substr(4, 2), 16);
-  
-  // Interpola
-  const r = Math.round(r1 + (r2 - r1) * localPos);
-  const g = Math.round(g1 + (g2 - g1) * localPos);
-  const b = Math.round(b1 + (b2 - b1) * localPos);
-  
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-};
-  
-  const previewColor = getPreviewGradientColor();
-  
-  return (
-    <div key={index} className="relative flex h-full flex-1 items-center justify-center">
-      <div
+        const isInLoop = 
+          (index / waveformData.length) * audioDuration >= (useFullTrack ? 0 : loopStart) &&
+          (index / waveformData.length) * audioDuration <= (useFullTrack ? audioDuration : loopEnd);
+        const isPassed = (index / waveformData.length) * audioDuration <= currentTime;
+        
+        return (
+          <div key={index} className="relative flex h-full flex-1 items-center justify-center">
+            <div
   className="rounded-full transition-all duration-150"
   style={{
     width: '3px',
     height: `${Math.max(amplitude * 95, 10)}%`,
-    background: !isRunning && isInLoop
-      ? isPassed
-        ? `linear-gradient(to top, ${previewColor}, ${hexToRgba(previewColor, 0.4)})`
-        : `linear-gradient(to top, ${hexToRgba(previewColor, 0.6)}, ${hexToRgba(previewColor, 0.3)})`
-      : isInLoop && isPassed
-        ? `linear-gradient(to top, ${phaseStyles[currentPhase].accent}, ${hexToRgba(phaseStyles[currentPhase].accent, 0.4)})`
-        : isInLoop
-          ? `linear-gradient(to top, ${hexToRgba(phaseStyles[currentPhase].accent, 0.5)}, ${hexToRgba(phaseStyles[currentPhase].accent, 0.3)})`
-          : 'linear-gradient(to top, rgba(255,255,255,0.15), rgba(255,255,255,0.05))',
+    background: isInLoop && isPassed
+      ? `linear-gradient(to top, ${phaseStyles[currentPhase].accent}, ${hexToRgba(phaseStyles[currentPhase].accent, 0.4)})`
+      : isInLoop
+? `linear-gradient(to top, ${hexToRgba(phaseStyles[currentPhase].accent, 0.5)}, ${hexToRgba(phaseStyles[currentPhase].accent, 0.3)})`
+      : 'linear-gradient(to top, rgba(255,255,255,0.15), rgba(255,255,255,0.05))',
     boxShadow: isInLoop && isPassed
       ? `0 0 20px ${hexToRgba(phaseStyles[currentPhase].accent, 0.7)}, 0 0 40px ${hexToRgba(phaseStyles[currentPhase].accent, 0.3)}`
       : 'none',
@@ -1683,95 +1030,31 @@ const getPreviewGradientColor = () => {
 
               <div className="space-y-8">
                 <motion.div
-  variants={scaleIn}
-  initial="hidden"
-  animate="visible"
-  className="rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(6,8,10,0.35)] backdrop-blur"
->
-  <div className="space-y-3 mb-4">
-  <div className="flex items-center justify-between">
-    <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">
-      Playlist Audio ({audioFiles.length})
-      {isAutoSaving && <span className="ml-2 text-emerald-400">● Salvataggio...</span>}
-    </span>
-    <button
-      onClick={() => setShowStorageModal(true)}
-      className="text-xs text-neutral-500 hover:text-neutral-300 transition"
-    >
-      📊 {(storageUsage / 1024 / 1024).toFixed(1)}MB / {(storageQuota / 1024 / 1024 / 1024).toFixed(1)}GB
-    </button>
-  </div>
-    <div className="flex flex-wrap gap-2">
-  <button
-    onClick={exportSession}
-    disabled={audioFiles.length === 0}
-    className="flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-xs font-semibold text-blue-300 transition hover:bg-blue-500/20 disabled:opacity-40"
-    title="Esporta playlist (JSON portabile)"
-  >
-    <Download size={12} />
-    Esporta
-  </button>
-
-<label className="flex items-center gap-1.5 cursor-pointer rounded-lg border border-purple-500/30 bg-purple-500/10 px-2.5 py-1.5 text-xs font-semibold text-purple-300 transition hover:bg-purple-500/20">
-  <Upload size={12} />
-  Importa
-  <input
-    type="file"
-    accept=".json"
-    onChange={importSession}
-    className="hidden"
-  />
-</label>
-
-<label className="flex items-center gap-1.5 cursor-pointer rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20">
-  <Plus size={12} />
-  Aggiungi
-  <input
-      type="file"
-      accept="audio/*"
-      onChange={handleFileUpload}
-      className="hidden"
-    />
-  </label>
-</div>
-  </div>
-  
-  <div className="space-y-2 max-h-60 overflow-y-auto pr-2" style={{scrollbarWidth: 'thin'}}>
-    {audioFiles.map(file => (
-      <div
-        key={file.id}
-        className={`flex items-center gap-2 rounded-lg border p-3 transition cursor-pointer ${
-          currentFileId === file.id
-            ? 'border-[#5dda9d] bg-emerald-500/10'
-            : 'border-white/10 bg-white/5 hover:border-white/20'
-        }`}
-        onClick={() => loadFile(file)}
-      >
-        <Music size={16} className={currentFileId === file.id ? 'text-[#5dda9d]' : 'text-neutral-500'} />
-        <div className="flex-1 min-w-0">
-          <div className="truncate text-sm font-semibold text-neutral-100">{file.name}</div>
-          <div className="text-xs text-neutral-500 tabular-nums">{formatTime(file.duration)}</div>
-        </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            removeFile(file.id);
-          }}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 transition hover:bg-red-500/10 hover:border-red-500/30"
-          title="Rimuovi"
-        >
-          <X size={14} />
-        </button>
-      </div>
-    ))}
-    
-    {audioFiles.length === 0 && (
-      <div className="text-center py-8 text-neutral-500 text-sm">
-        Nessun file caricato
-      </div>
-    )}
-  </div>
-</motion.div>
+                  variants={scaleIn}
+                  initial="hidden"
+                  animate="visible"
+                  className="rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(6,8,10,0.35)] backdrop-blur"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">File Audio</span>
+                      <div className="mt-2 flex items-center gap-2">
+                        <Music size={20} className="text-[#5dda9d]" />
+                        <div className="flex-1">
+                          <div className="truncate text-sm font-semibold text-neutral-100">{audioFileName}</div>
+                          <div className="text-xs text-neutral-500 tabular-nums">{formatTime(audioDuration)}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={clearAudioFile}
+                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 transition hover:bg-red-500/10 hover:border-red-500/30"
+                      title="Rimuovi file"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                </motion.div>
 
                 <motion.div
                   variants={scaleIn}
@@ -2058,165 +1341,6 @@ const getPreviewGradientColor = () => {
             </div>
           </div>
         )}
-        
-        {/* MODAL IMPORT PLAYLIST */}
-{showImportModal && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-    <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0d0e] p-8 shadow-2xl">
-      <h2 className="mb-6 text-2xl font-semibold">
-        📋 Importa Playlist: <span className="text-[#5dda9d]">{sessionName}</span>
-      </h2>
-      
-      <div className="mb-6 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
-        <p className="text-sm text-blue-300">
-          <strong>✅ {Object.keys(importMatchedFiles).length} file</strong> trovati automaticamente in cache
-        </p>
-        <p className="mt-2 text-sm text-neutral-400">
-          <strong>⚠️ {importPendingFiles.filter(f => !importMatchedFiles[f.id]).length} file</strong> mancanti - ricaricali manualmente
-</p>
-</div>
-<div className="mb-6 space-y-3">
-    {importPendingFiles.map(pendingFile => {
-      const isMatched = !!importMatchedFiles[pendingFile.id];
-      
-      return (
-        <div
-          key={pendingFile.id}
-          className={`rounded-xl border p-4 transition ${
-            isMatched
-              ? 'border-emerald-500/40 bg-emerald-500/10'
-              : 'border-red-500/40 bg-red-500/10'
-          }`}
-        >
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                {isMatched ? (
-                  <span className="text-emerald-400 text-lg">✅</span>
-                ) : (
-                  <span className="text-red-400 text-lg">❌</span>
-                )}
-                <span className="font-semibold truncate">{pendingFile.name}</span>
-              </div>
-              <div className="mt-1 text-xs text-neutral-500">
-                Durata: {formatTime(pendingFile.duration)} • 
-                Loop: {pendingFile.useFullTrack ? 'Traccia completa' : `${formatTime(pendingFile.loopStart)} - ${formatTime(pendingFile.loopEnd)}`}
-              </div>
-            </div>
-            
-            {!isMatched && (
-              <label className="cursor-pointer rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/20 whitespace-nowrap">
-                📁 Ricarica
-                <input
-                  type="file"
-                  accept="audio/*"
-                  onChange={(e) => handleReloadFileForImport(pendingFile, e)}
-                  className="hidden"
-                />
-              </label>
-            )}
-          </div>
-        </div>
-      );
-    })}
-    
-    {Object.keys(importMatchedFiles).length > 0 && importPendingFiles.length === 0 && (
-      <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-6 text-center">
-        <p className="text-emerald-300 font-semibold">
-          ✅ Tutti i file sono già presenti!
-        </p>
-        <p className="mt-2 text-sm text-neutral-400">
-          Clicca "Completa" per caricare la playlist.
-        </p>
-      </div>
-    )}
-  </div>
-  
-  <div className="flex gap-4">
-    <button
-      onClick={() => {
-        setShowImportModal(false);
-        setImportPendingFiles([]);
-        setImportMatchedFiles({});
-      }}
-      className="flex-1 rounded-xl border border-white/10 bg-white/5 px-6 py-3 font-semibold transition hover:bg-white/10"
-    >
-      Annulla
-    </button>
-    
-    <button
-      onClick={completeImport}
-      disabled={Object.keys(importMatchedFiles).length === 0}
-      className="flex-1 rounded-xl bg-gradient-to-r from-[#3e5c55] to-[#2e4741] px-6 py-3 font-semibold shadow-lg transition hover:shadow-xl disabled:opacity-40"
-    >
-      Completa Importazione
-    </button>
-  </div>
-</div>
-</div>
-)}
-````
-
-{/* MODAL STORAGE INFO */}
-{showStorageModal && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-    <div className="w-full max-w-xl rounded-3xl border border-white/10 bg-[#0b0d0e] p-8 shadow-2xl">
-      <h2 className="mb-6 text-2xl font-semibold">📊 Gestione Storage</h2>
-      
-      <div className="mb-6 space-y-4">
-        <div>
-          <div className="mb-2 flex justify-between text-sm">
-            <span className="text-neutral-400">Spazio utilizzato</span>
-            <span className="font-semibold">{(storageUsage / 1024 / 1024).toFixed(1)} MB</span>
-          </div>
-          <div className="h-3 overflow-hidden rounded-full bg-white/5">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-blue-500"
-              style={{ width: `${Math.min((storageUsage / storageQuota) * 100, 100)}%` }}
-            />
-          </div>
-          <div className="mt-1 text-xs text-neutral-500">
-            {((storageUsage / storageQuota) * 100).toFixed(1)}% di {(storageQuota / 1024 / 1024 / 1024).toFixed(1)} GB disponibili
-          </div>
-        </div>
-        
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-neutral-400">File audio in cache</span>
-            <span className="font-semibold">{audioFiles.length}</span>
-          </div>
-          <div className="text-xs text-neutral-500">
-            I file sono salvati nel browser e persistono tra le sessioni
-          </div>
-        </div>
-        
-        <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
-          <p className="text-xs text-yellow-300">
-            ⚠️ <strong>Nota:</strong> Se cancelli i dati del browser (cookie/cache) perderai tutti i file.
-            Esporta regolarmente le playlist come backup!
-          </p>
-        </div>
-      </div>
-      
-      <div className="space-y-3">
-        <button
-          onClick={clearAllStorage}
-          className="w-full rounded-xl border border-red-500/30 bg-red-500/10 px-6 py-3 font-semibold text-red-300 transition hover:bg-red-500/20"
-        >
-          🗑️ Cancella Tutti i File
-        </button>
-        
-        <button
-          onClick={() => setShowStorageModal(false)}
-          className="w-full rounded-xl border border-white/10 bg-white/5 px-6 py-3 font-semibold transition hover:bg-white/10"
-        >
-          Chiudi
-        </button>
-      </div>
-    </div>
-  </div>
-)}
-        
          {/* INSERISCI IL FOOTER QUI */}
         <footer className="mt-16 border-t border-white/10 pt-8 pb-4">
           <div className="space-y-6">
