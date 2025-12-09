@@ -19,12 +19,41 @@ interface IndexedDBFile {
   timestamp: number;
 }
 
+// SOSTITUISCI la funzione openDB (righe ~23-37) con questa:
+let dbInstance: IDBDatabase | null = null;
+
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
+    // ✅ Se il database è già aperto, riutilizzalo
+    if (dbInstance && dbInstance.objectStoreNames.contains(STORE_NAME)) {
+      resolve(dbInstance);
+      return;
+    }
+    
+    // ✅ Chiudi solo se era in uno stato invalido
+    if (dbInstance) {
+      try {
+        dbInstance.close();
+      } catch (e) {
+        console.warn('Errore chiusura DB precedente:', e);
+      }
+      dbInstance = null;
+    }
+    
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      dbInstance = request.result;
+      
+      // ✅ Gestisci chiusura inaspettata
+      dbInstance.onclose = () => {
+        console.warn('⚠️ Database chiuso inaspettatamente');
+        dbInstance = null;
+      };
+      
+      resolve(request.result);
+    };
     
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
@@ -35,24 +64,67 @@ const openDB = (): Promise<IDBDatabase> => {
   });
 };
 
+
+// SOSTITUISCI saveFileToIndexedDB (righe ~38-57) con questo:
 const saveFileToIndexedDB = async (fileData: IndexedDBFile): Promise<void> => {
-  console.log('💾 saveFileToIndexedDB chiamata con:', fileData.name);
+  console.log('💾 saveFileToIndexedDB chiamata con:', fileData.name, 'ID:', fileData.id);
   const db = await openDB();
   console.log('✅ Database aperto');
+  
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.put(fileData);
-    
-    request.onsuccess = () => {
-      console.log('✅ File salvato con successo in IndexedDB!');
-      resolve();
-    };
-    
-    request.onerror = () => {
-      console.error('❌ Errore salvataggio:', request.error);
-      reject(request.error);
-    };
+    try {
+      const transaction = db.transaction([STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      
+      // ✅ VERIFICA che il blob sia valido
+      if (!fileData.blob || fileData.blob.size === 0) {
+        console.error('❌ Blob invalido:', fileData.blob);
+        reject(new Error('Blob invalido'));
+        return;
+      }
+      
+      console.log('📝 Provo a salvare:', {
+        id: fileData.id,
+        name: fileData.name,
+        blobSize: (fileData.blob.size / 1024 / 1024).toFixed(2) + 'MB'
+      });
+      
+      const request = store.put(fileData);
+      
+      request.onsuccess = () => {
+        console.log('✅ File EFFETTIVAMENTE salvato in IndexedDB!', fileData.name, 'ID:', fileData.id);
+        
+        // ✅ VERIFICA che sia stato salvato
+        const verifyRequest = store.get(fileData.id);
+        verifyRequest.onsuccess = () => {
+          if (verifyRequest.result) {
+            console.log('✅ VERIFICA OK: File trovato in IndexedDB');
+            resolve();
+          } else {
+            console.error('❌ VERIFICA FALLITA: File non trovato dopo put()!');
+            reject(new Error('Verifica fallita'));
+          }
+        };
+        verifyRequest.onerror = () => {
+          console.error('❌ Errore verifica:', verifyRequest.error);
+          reject(verifyRequest.error);
+        };
+      };
+      
+      request.onerror = () => {
+        console.error('❌ Errore salvataggio:', request.error);
+        reject(request.error);
+      };
+      
+      transaction.onerror = () => {
+        console.error('❌ Errore transazione:', transaction.error);
+        reject(transaction.error);
+      };
+      
+    } catch (error) {
+      console.error('❌ Eccezione in saveFileToIndexedDB:', error);
+      reject(error);
+    }
   });
 };
 
@@ -68,19 +140,36 @@ const getFileFromIndexedDB = async (id: string): Promise<IndexedDBFile | null> =
   });
 };
 
+// SOSTITUISCI getAllFilesFromIndexedDB (righe ~103-116):
 const getAllFilesFromIndexedDB = async (): Promise<IndexedDBFile[]> => {
+  console.log('🔍 getAllFilesFromIndexedDB: apertura database...');
+  
+  // ✅ ASPETTA 100ms per assicurarsi che le transazioni di scrittura siano finite
+  
   const db = await openDB();
+  console.log('✅ Database aperto per lettura');
+  
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], 'readonly');
     const store = transaction.objectStore(STORE_NAME);
     const request = store.getAll();
     
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const files = request.result || [];
+      console.log('📦 getAllFilesFromIndexedDB trovati:', files.map(f => ({ id: f.id, name: f.name })));
+      console.log('📊 Totale file:', files.length);
+      resolve(files);
+    };
+    
+    request.onerror = () => {
+      console.error('❌ Errore getAll:', request.error);
+      reject(request.error);
+    };
   });
 };
 
 const deleteFileFromIndexedDB = async (id: string): Promise<void> => {
+
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], 'readwrite');
@@ -349,6 +438,7 @@ const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
       timestamp: Date.now()
     };
     console.log('🔵 Tentativo salvataggio in IndexedDB...');
+    console.log('💾 File salvato con ID:', id); // ← AGGIUNGI QUESTA RIGA
     // Salva in IndexedDB
     await saveFileToIndexedDB({
       id,
@@ -390,7 +480,7 @@ const loadFile = (fileData: AudioFileData) => {
 
 const removeFile = async (id: string) => {
   try {
-    await deleteFileFromIndexedDB(id);
+    
     
     setAudioFiles(prev => {
       const updated = prev.filter(f => f.id !== id);
@@ -404,9 +494,27 @@ const removeFile = async (id: string) => {
       return updated;
     });
     
-    await updateStorageInfo();
+    // ✅ NON aggiornare storage info (il file è ancora nel DB)
+    console.log('🗑️ File rimosso dalla playlist (ma rimane in IndexedDB)');
   } catch (error) {
     console.error('Error removing file:', error);
+  }
+};
+
+const deleteFileFromLibrary = async (id: string) => {
+  const confirm = window.confirm(
+    '⚠️ ATTENZIONE!\n\nQuesto cancellerà il file anche dalla libreria permanente.\nLa playlist potrà richiedere di ricaricarlo manualmente.\n\nVuoi continuare?'
+  );
+  
+  if (!confirm) return;
+  
+  try {
+    await deleteFileFromIndexedDB(id);
+    await removeFile(id); // Rimuovi anche dalla playlist corrente
+    await updateStorageInfo();
+    console.log('🗑️ File cancellato definitivamente dalla libreria');
+  } catch (error) {
+    console.error('Error deleting file from library:', error);
   }
 };
 
@@ -443,6 +551,7 @@ const exportSession = () => {
   URL.revokeObjectURL(url);
 };
 
+// SOSTITUISCI la funzione importSession (riga ~470-541) con questa:
 const importSession = async (event: React.ChangeEvent<HTMLInputElement>) => {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -465,32 +574,37 @@ const importSession = async (event: React.ChangeEvent<HTMLInputElement>) => {
       
       // Smart matching con IndexedDB
       const existingFiles = await getAllFilesFromIndexedDB();
+      console.log('📂 File in IndexedDB:', existingFiles.length);
+      console.log('📋 File nella playlist:', data.files.length);
+      
       const matched: Record<string, AudioFileData> = {};
       const pending: any[] = [];
       
       for (const importedFile of data.files) {
-        // Cerca match per nome file
-        const matchedDB = existingFiles.find(f => f.name === importedFile.name);
+  const matchedDB = existingFiles.find(f => f.name === importedFile.name); // ✅ CORRETTO
         
         if (matchedDB) {
-          // File già presente in IndexedDB
-          const url = URL.createObjectURL(matchedDB.blob);
-          matched[importedFile.id] = {
-            id: importedFile.id,
-            url,
-            name: matchedDB.name,
-            duration: matchedDB.duration,
-            loopStart: importedFile.loopStart,
-            loopEnd: importedFile.loopEnd,
-            useFullTrack: importedFile.useFullTrack,
-            waveform: matchedDB.waveform,
-            timestamp: Date.now()
-          };
+  const url = URL.createObjectURL(matchedDB.blob);
+  matched[importedFile.id] = {
+  id: importedFile.id,
+  url,
+  name: matchedDB.name,
+  duration: matchedDB.duration,
+  loopStart: importedFile.loopStart,  // ✅ Dalla playlist
+  loopEnd: importedFile.loopEnd,      // ✅ Dalla playlist
+  useFullTrack: importedFile.useFullTrack, // ✅ Dalla playlist
+  waveform: matchedDB.waveform,
+  timestamp: Date.now()
+};
         } else {
+          console.log('❌ Match NON trovato per:', importedFile.name);
           // File mancante
           pending.push(importedFile);
         }
       }
+      
+      console.log('✅ File matchati:', Object.keys(matched).length);
+      console.log('⚠️ File mancanti:', pending.length);
       
       setImportMatchedFiles(matched);
       setImportPendingFiles(pending);
@@ -618,8 +732,9 @@ const handleReloadFileForImport = async (pendingFile: any, event: React.ChangeEv
     });
     
     setImportMatchedFiles(prev => ({ ...prev, [id]: newFile }));
-    setIsLoadingWaveform(false);
-    await updateStorageInfo();
+console.log('✅ File ricaricato e aggiunto ai matched:', file.name);
+setIsLoadingWaveform(false);
+await updateStorageInfo();
     
   } catch (error) {
     console.error('Error reloading file:', error);
@@ -675,45 +790,7 @@ useEffect(() => {
   }, [audioFile]);
   
   // Carica file da IndexedDB all'avvio
-useEffect(() => {
-  const loadFiles = async () => {
-    try {
-      const files = await getAllFilesFromIndexedDB();
-      
-      const loadedFiles: AudioFileData[] = await Promise.all(
-        files.map(async (f) => {
-          const url = URL.createObjectURL(f.blob);
-          return {
-            id: f.id,
-            url,
-            name: f.name,
-            duration: f.duration,
-            loopStart: f.loopStart,
-            loopEnd: f.loopEnd,
-            useFullTrack: f.useFullTrack,
-            waveform: f.waveform,
-            timestamp: f.timestamp
-          };
-        })
-      );
-      
-      setAudioFiles(loadedFiles);
-      
-      // Carica ultimo file usato
-      if (loadedFiles.length > 0) {
-        const lastUsed = loadedFiles.sort((a, b) => b.timestamp - a.timestamp)[0];
-        loadFile(lastUsed);
-      }
-      
-      // Aggiorna storage usage
-      updateStorageInfo();
-    } catch (error) {
-      console.error('Error loading files from IndexedDB:', error);
-    }
-  };
-  
-  loadFiles();
-}, []);
+
 
 // Aggiorna storage info periodicamente
 const updateStorageInfo = async () => {
@@ -727,21 +804,33 @@ const updateStorageInfo = async () => {
 };
 
 // Salva modifiche loop in IndexedDB
+// SOSTITUISCI l'useEffect (righe ~756-785) con questo:
 useEffect(() => {
   if (!currentFileId || !audioFile) return;
   
   const saveChanges = async () => {
     try {
       const currentFile = audioFiles.find(f => f.id === currentFileId);
-      if (!currentFile) return;
+      if (!currentFile) {
+        console.log('⚠️ File corrente non trovato in audioFiles');
+        return;
+      }
       
-      const response = await fetch(currentFile.url);
-      const blob = await response.blob();
+      console.log('🔍 Cerco file in IndexedDB con ID:', currentFileId); // ← AGGIUNGI
+      
+      // ✅ Recupera il blob originale da IndexedDB invece di fare fetch
+      const existingFile = await getFileFromIndexedDB(currentFileId);
+      if (!existingFile) {
+        console.log('⚠️ File non trovato in IndexedDB per salvare modifiche');
+        return;
+      }
+      
+      console.log('💾 Salvo modifiche per:', currentFile.name, 'con ID:', currentFileId); // ← MODIFICA
       
       await saveFileToIndexedDB({
         id: currentFileId,
         name: audioFileName,
-        blob,
+        blob: existingFile.blob, // ✅ USA IL BLOB ORIGINALE
         duration: audioDuration,
         loopStart,
         loopEnd,
@@ -750,57 +839,99 @@ useEffect(() => {
         timestamp: Date.now()
       });
       
-      console.log('✅ Changes saved to IndexedDB');
+      console.log('✅ Modifiche salvate in IndexedDB');
     } catch (error) {
-      console.error('Save error:', error);
+      console.error('❌ Save error:', error);
     }
   };
   
-  const timeoutId = setTimeout(saveChanges, 3000); // Salva dopo 3s di inattività
+  const timeoutId = setTimeout(saveChanges, 3000);
   
   return () => clearTimeout(timeoutId);
-}, [loopStart, loopEnd, useFullTrack, currentFileId, audioFiles]);
+}, [loopStart, loopEnd, useFullTrack, currentFileId, audioFileName, audioDuration, waveformData, audioFiles]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !audioFile) return;
 
     const handleTimeUpdate = () => {
+  const audio = audioRef.current;
+  if (!audio) return;
+
   setCurrentTime(audio.currentTime);
-  requestAnimationFrame(() => setCurrentTime(audio.currentTime)); // <-- AGGIUNGI QUESTA
+  // Uso di requestAnimationFrame per una lettura più fluida, come fai tu
+  requestAnimationFrame(() => setCurrentTime(audio.currentTime)); 
+
+  const effectiveEnd = useFullTrack ? audioDuration : loopEnd;
+const effectiveStart = useFullTrack ? 0 : loopStart;
+
+// 1. GESTIONE PREVIEW (Reset dello stato alla fine della riproduzione)
+if (isPreviewPlaying) {
+  if (audio.currentTime >= effectiveEnd - 0.1) {
+    
+    // La Preview è finita:
+    audio.pause(); // Ferma la riproduzione
+    audio.currentTime = effectiveStart; // Riporta il cursore all'inizio (o loopStart)
+    
+    // 🎯 FIX: Resetta lo stato del pulsante 
+    setIsPreviewPlaying(false); 
+  }
+  return;
+}
+
+// 2. GESTIONE ALLENAMENTO
+if (isRunning && !isPaused && !isInBreak && !isFocused) {
+  if (audio.currentTime >= effectiveEnd - 0.1) {
+    // --- Logica di fine ripetizione ---
+
+    const nextRepetition = currentRepetition + 1;
+    const totalRepetitions = phaseRepetitions[currentPhase];
+
+    // Caso A: Fase NON completata (ripetizione interna)
+    if (nextRepetition < totalRepetitions) {
       
-      const effectiveEnd = useFullTrack ? audioDuration : loopEnd;
-      if (audio.currentTime >= effectiveEnd - 0.1) {
-        // Fine ripetizione
-        if (isRunning && !isPaused && !isInBreak && !isFocused) {
-          const newRepetition = currentRepetition + 1;
-          setCurrentRepetition(newRepetition);
-          
-          // Controlla se fase completata
-          if (newRepetition >= phaseRepetitions[currentPhase]) {
-            const currentIndex = phaseOrder.indexOf(currentPhase);
-            if (currentIndex < phaseOrder.length - 1) {
-              setIsInBreak(true);
-              const nextPhase = phaseOrder[currentIndex + 1];
-              setTimeout(() => startBreak(nextPhase), 50);
-            } else {
-              // Fine ciclo completo
-              setIsRunning(false);
-              setCurrentPhase('A');
-              setCurrentRepetition(0);
-              if (audioRef.current) {
-                audioRef.current.pause();
-                audioRef.current.currentTime = useFullTrack ? 0 : loopStart;
-              }
-            }
-          }
-        }
+      // 🎯 FIX: Invertiamo l'ordine e forziamo la riproduzione 🎯
+      
+      // 1. Forza il riavvio del loop e la riproduzione (azione sincrona)
+      audio.currentTime = effectiveStart; 
+      audio.play(); 
+      
+      // 2. Aggiorna lo stato della ripetizione (azione asincrona)
+      // Questo avviene dopo che l'audio è già ripartito, evitando l'interruzione.
+      setCurrentRepetition(nextRepetition);
+      
+    } 
+    // Caso B: Fase COMPLETATA (passaggio al break o fine ciclo)
+    else {
+      const currentIndex = phaseOrder.indexOf(currentPhase);
+      
+      if (currentIndex < phaseOrder.length - 1) {
+        // Passaggio alla pausa (Break)
+        setIsInBreak(true);
+        const nextPhase = phaseOrder[currentIndex + 1];
+
+        // 1. Ferma l'audio e aggiorna l'ultima ripetizione
+        audio.pause();
+        setCurrentRepetition(nextRepetition); 
         
-        // Riavvia loop
-        const effectiveStart = useFullTrack ? 0 : loopStart;
+        // 2. Passa al break
+        setTimeout(() => startBreak(nextPhase), 50);
+      } else {
+        // Fine ciclo completo
+        setIsRunning(false);
+        setCurrentPhase('A');
+        setCurrentRepetition(0);
+        audio.pause();
         audio.currentTime = effectiveStart;
       }
-    };
+    }
+  }
+} 
+// 3. GESTIONE FINE TRACK QUANDO NON IN RUNNING (per riposizionamento)
+else if (!isRunning && audio.currentTime >= effectiveEnd - 0.1) {
+  audio.currentTime = effectiveStart;
+}
+};
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
     return () => audio.removeEventListener('timeupdate', handleTimeUpdate);
@@ -824,6 +955,52 @@ useEffect(() => {
       audio.volume = volume;
     }
   }, [volume]);
+  
+  // Carica file da IndexedDB all'avvio
+useEffect(() => {
+  const loadFilesFromDB = async () => {
+    console.log('🔄 Caricamento file da IndexedDB all\'avvio...');
+    try {
+      const files = await getAllFilesFromIndexedDB();
+      console.log('📦 File caricati da IndexedDB:', files.length);
+      
+      const loadedFiles: AudioFileData[] = files.map(f => ({
+        id: f.id,
+        url: URL.createObjectURL(f.blob),
+        name: f.name,
+        duration: f.duration,
+        loopStart: f.loopStart,
+        loopEnd: f.loopEnd,
+        useFullTrack: f.useFullTrack,
+        waveform: f.waveform,
+        timestamp: f.timestamp
+      }));
+      
+      setAudioFiles(loadedFiles);
+      
+      if (loadedFiles.length > 0) {
+        loadFile(loadedFiles[0]);
+      }
+      
+      await updateStorageInfo();
+    } catch (error) {
+      console.error('❌ Errore caricamento file:', error);
+    }
+  };
+  
+  loadFilesFromDB();
+}, []);
+
+// Reset preview quando cambia file
+useEffect(() => {
+  if (isPreviewPlaying) {
+    audioRef.current?.pause();
+    setIsPreviewPlaying(false);
+  }
+}, [currentFileId]);
+const [previewTime, setPreviewTime] = useState(0);
+
+ // ✅ Esegui solo all'avvio
 
   const startBreak = (phaseToStartAfterBreak: PhaseKey) => {
     countdownTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
@@ -888,7 +1065,8 @@ useEffect(() => {
   } else {
     const effectiveStart = useFullTrack ? 0 : loopStart;
     audio.currentTime = effectiveStart;
-    audio.playbackRate = 1; // Preview sempre a velocità normale
+    audio.playbackRate = 1;
+    setPreviewTime(effectiveStart); // ✅ Inizializza previewTime
     audio.play();
     setIsPreviewPlaying(true);
   }
@@ -1323,9 +1501,11 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                                 Velocità: <span className="font-semibold text-white">{Math.round(getCurrentPlaybackRate() * 100)}%</span>
                               </div>
                               <div className="flex items-center gap-2">
-                                <div className="h-2 w-2 rounded-full bg-neutral-500"></div>
-                                Ripetizioni: <span className="font-semibold text-white">{currentRepetition + 1}/{phaseRepetitions[currentPhase]}</span>
-                              </div>
+  <div className="h-2 w-2 rounded-full bg-neutral-500"></div>
+  Ripetizioni: <span className="font-semibold text-white">
+    {isPreviewPlaying ? '--/--' : `${currentRepetition + 1}/${phaseRepetitions[currentPhase]}`}
+  </span>
+</div>
                               <div className="flex items-center gap-2">
                                 <Music size={12} className="text-neutral-500" />
                                 <span className="truncate">{audioFileName}</span>
@@ -1334,8 +1514,10 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                           </div>
                           
                           <div className="text-center md:text-left">
-                            <div className="mb-2 text-xs uppercase tracking-[0.4em] text-neutral-500">Ripetizione</div>
-                            <div className="text-6xl font-bold tabular-nums text-neutral-100">{currentRepetition + 1}/{phaseRepetitions[currentPhase]}</div>
+  <div className="mb-2 text-xs uppercase tracking-[0.4em] text-neutral-500">Ripetizione</div>
+  <div className="text-6xl font-bold tabular-nums text-neutral-100">
+    {isPreviewPlaying ? 'Preview' : `${currentRepetition + 1}/${phaseRepetitions[currentPhase]}`}
+  </div>
                             {isFocused && (
                               <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-yellow-500/30 bg-yellow-500/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.35em] text-yellow-300">
                                 <Target size={14} /> FOCUS ATTIVO
@@ -1345,17 +1527,17 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                         </div>
 
                         <div>
-                          <div className="mb-2 flex justify-between text-xs text-neutral-500">
-                            <span>Posizione Audio</span>
-                            <span className="tabular-nums">{formatTime(currentTime)} / {formatTime(audioDuration)}</span>
-                          </div>
-                          <div className="h-2 overflow-hidden rounded-full bg-white/5">
-                            <div
-                              className={`h-full rounded-full bg-gradient-to-r ${phaseStyles[currentPhase].color}`}
-                              style={{ width: `${(currentTime / audioDuration) * 100}%` }}
-                            />
-                          </div>
-                        </div>
+  <div className="mb-2 flex justify-between text-xs text-neutral-500">
+    <span>{isPreviewPlaying ? 'Preview Loop' : 'Posizione Audio'}</span>
+    <span className="tabular-nums">{formatTime(currentTime)} / {formatTime(audioDuration)}</span>
+  </div>
+  <div className="h-2 overflow-hidden rounded-full bg-white/5">
+    <div
+      className={`h-full rounded-full bg-gradient-to-r ${isPreviewPlaying ? 'from-purple-500 to-pink-500' : phaseStyles[currentPhase].color}`}
+      style={{ width: `${(currentTime / audioDuration) * 100}%` }}
+    />
+  </div>
+</div>
 
                         
                       </motion.div>
@@ -1396,7 +1578,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
       Caricamento waveform...
     </div>
   ) : waveformData.length > 0 ? (
-    <div className="relative flex h-full items-center justify-center gap-1 px-4">
+    <div className="relative flex h-full items-center justify-center gap-0 px-1">
       {waveformData.map((amplitude, index) => {
   const isInLoop = 
     (index / waveformData.length) * audioDuration >= (useFullTrack ? 0 : loopStart) &&
@@ -1449,11 +1631,11 @@ const getPreviewGradientColor = () => {
   const previewColor = getPreviewGradientColor();
   
   return (
-    <div key={index} className="relative flex h-full flex-1 items-center justify-center">
+  <div key={index} className="relative flex h-full items-center justify-center" style={{ flex: 1 }}>
       <div
   className="rounded-full transition-all duration-150"
   style={{
-    width: '3px',
+    width: '2px',
     height: `${Math.max(amplitude * 95, 10)}%`,
     background: !isRunning && isInLoop
       ? isPassed
@@ -1702,34 +1884,37 @@ const getPreviewGradientColor = () => {
     </button>
   </div>
     <div className="flex flex-wrap gap-2">
+  {/* 1. AGGIUNGI (primo) */}
+  <label className="flex items-center gap-1.5 cursor-pointer rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20">
+    <Plus size={12} />
+    Aggiungi
+    <input
+      type="file"
+      accept="audio/*"
+      onChange={handleFileUpload}
+      className="hidden"
+    />
+  </label>
+
+  {/* 2. SALVA PLAYLIST (secondo, icona Upload) */}
   <button
     onClick={exportSession}
     disabled={audioFiles.length === 0}
     className="flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-xs font-semibold text-blue-300 transition hover:bg-blue-500/20 disabled:opacity-40"
-    title="Esporta playlist (JSON portabile)"
+    title="Salva playlist (JSON portabile)"
   >
-    <Download size={12} />
-    Esporta
+    <Upload size={12} />
+    Salva Playlist
   </button>
 
-<label className="flex items-center gap-1.5 cursor-pointer rounded-lg border border-purple-500/30 bg-purple-500/10 px-2.5 py-1.5 text-xs font-semibold text-purple-300 transition hover:bg-purple-500/20">
-  <Upload size={12} />
-  Importa
-  <input
-    type="file"
-    accept=".json"
-    onChange={importSession}
-    className="hidden"
-  />
-</label>
-
-<label className="flex items-center gap-1.5 cursor-pointer rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20">
-  <Plus size={12} />
-  Aggiungi
-  <input
+  {/* 3. CARICA PLAYLIST (terzo, icona Download) */}
+  <label className="flex items-center gap-1.5 cursor-pointer rounded-lg border border-purple-500/30 bg-purple-500/10 px-2.5 py-1.5 text-xs font-semibold text-purple-300 transition hover:bg-purple-500/20">
+    <Download size={12} />
+    Carica Playlist
+    <input
       type="file"
-      accept="audio/*"
-      onChange={handleFileUpload}
+      accept=".json"
+      onChange={importSession}
       className="hidden"
     />
   </label>
@@ -1752,16 +1937,31 @@ const getPreviewGradientColor = () => {
           <div className="truncate text-sm font-semibold text-neutral-100">{file.name}</div>
           <div className="text-xs text-neutral-500 tabular-nums">{formatTime(file.duration)}</div>
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            removeFile(file.id);
-          }}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 transition hover:bg-red-500/10 hover:border-red-500/30"
-          title="Rimuovi"
-        >
-          <X size={14} />
-        </button>
+        <div className="flex gap-1">
+  {/* Rimuovi dalla playlist (icona Minus) */}
+  <button
+    onClick={(e) => {
+      e.stopPropagation();
+      removeFile(file.id);
+    }}
+    className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 transition hover:bg-yellow-500/10 hover:border-yellow-500/30"
+    title="Rimuovi dalla playlist (rimane disponibile nel Database)"
+  >
+    <Minus size={14} />
+  </button>
+  
+  {/* Cancella definitivamente (icona X rossa) */}
+  <button
+    onClick={(e) => {
+      e.stopPropagation();
+      deleteFileFromLibrary(file.id);
+    }}
+    className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 transition hover:bg-red-500/10 hover:border-red-500/30"
+    title="Cancella definitivamente dal Database"
+  >
+    <X size={14} className="text-red-400" />
+  </button>
+</div>
       </div>
     ))}
     
@@ -2155,7 +2355,7 @@ const getPreviewGradientColor = () => {
 </div>
 </div>
 )}
-````
+
 
 {/* MODAL STORAGE INFO */}
 {showStorageModal && (
@@ -2192,7 +2392,7 @@ const getPreviewGradientColor = () => {
         
         <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
           <p className="text-xs text-yellow-300">
-            ⚠️ <strong>Nota:</strong> Se cancelli i dati del browser (cookie/cache) perderai tutti i file.
+            ⚠️ <strong>Nota:</strong> Se cancelli i dati del browser (cookie/cache) perderai tutti i file (dal Database, NON dal tuo dispositivo!)
             Esporta regolarmente le playlist come backup!
           </p>
         </div>
