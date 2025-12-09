@@ -855,82 +855,88 @@ useEffect(() => {
     if (!audio || !audioFile) return;
 
     const handleTimeUpdate = () => {
-  const audio = audioRef.current;
-  if (!audio) return;
+    const audio = audioRef.current;
+    if (!audio) return;
 
-  setCurrentTime(audio.currentTime);
-  // Uso di requestAnimationFrame per una lettura più fluida, come fai tu
-  requestAnimationFrame(() => setCurrentTime(audio.currentTime)); 
+    setCurrentTime(audio.currentTime);
+    requestAnimationFrame(() => setCurrentTime(audio.currentTime));
 
-  const effectiveEnd = useFullTrack ? audioDuration : loopEnd;
-const effectiveStart = useFullTrack ? 0 : loopStart;
+    // effectiveEnd e effectiveStart vengono calcolati qui, ma il blocco FOCUS li ignorerà
+    // per forzare l'uso di loopStart/loopEnd per la ripetizione.
+    const effectiveEnd = useFullTrack ? audioDuration : loopEnd;
+    const effectiveStart = useFullTrack ? 0 : loopStart;
 
-// 1. GESTIONE PREVIEW (Reset dello stato alla fine della riproduzione)
-if (isPreviewPlaying) {
-  if (audio.currentTime >= effectiveEnd - 0.1) {
-    
-    // La Preview è finita:
-    audio.pause(); // Ferma la riproduzione
-    audio.currentTime = effectiveStart; // Riporta il cursore all'inizio (o loopStart)
-    
-    // 🎯 FIX: Resetta lo stato del pulsante 
-    setIsPreviewPlaying(false); 
-  }
-  return;
-}
-
-// 2. GESTIONE ALLENAMENTO
-if (isRunning && !isPaused && !isInBreak && !isFocused) {
-  if (audio.currentTime >= effectiveEnd - 0.1) {
-    // --- Logica di fine ripetizione ---
-
-    const nextRepetition = currentRepetition + 1;
-    const totalRepetitions = phaseRepetitions[currentPhase];
-
-    // Caso A: Fase NON completata (ripetizione interna)
-    if (nextRepetition < totalRepetitions) {
-      
-      // 🎯 FIX: Invertiamo l'ordine e forziamo la riproduzione 🎯
-      
-      // 1. Forza il riavvio del loop e la riproduzione (azione sincrona)
-      audio.currentTime = effectiveStart; 
-      audio.play(); 
-      
-      // 2. Aggiorna lo stato della ripetizione (azione asincrona)
-      // Questo avviene dopo che l'audio è già ripartito, evitando l'interruzione.
-      setCurrentRepetition(nextRepetition);
-      
-    } 
-    // Caso B: Fase COMPLETATA (passaggio al break o fine ciclo)
-    else {
-      const currentIndex = phaseOrder.indexOf(currentPhase);
-      
-      if (currentIndex < phaseOrder.length - 1) {
-        // Passaggio alla pausa (Break)
-        setIsInBreak(true);
-        const nextPhase = phaseOrder[currentIndex + 1];
-
-        // 1. Ferma l'audio e aggiorna l'ultima ripetizione
-        audio.pause();
-        setCurrentRepetition(nextRepetition); 
-        
-        // 2. Passa al break
-        setTimeout(() => startBreak(nextPhase), 50);
-      } else {
-        // Fine ciclo completo
-        setIsRunning(false);
-        setCurrentPhase('A');
-        setCurrentRepetition(0);
-        audio.pause();
-        audio.currentTime = effectiveStart;
+    // 1. GESTIONE PREVIEW (Reset del pulsante alla fine)
+    if (isPreviewPlaying) {
+      if (audio.currentTime >= effectiveEnd - 0.1) {
+        audio.pause(); 
+        audio.currentTime = effectiveStart; 
+        setIsPreviewPlaying(false); 
       }
+      return;
     }
-  }
-} 
-// 3. GESTIONE FINE TRACK QUANDO NON IN RUNNING (per riposizionamento)
-else if (!isRunning && audio.currentTime >= effectiveEnd - 0.1) {
-  audio.currentTime = effectiveStart;
-}
+    
+    // 🎯 NUOVO BLOCCO: GESTIONE FOCUS 🎯
+    if (isRunning && isFocused && !isPaused) {
+        // In modalità FOCUS, forziamo sempre l'uso di loopStart e loopEnd
+        const focusEnd = loopEnd;
+        const focusStart = loopStart;
+
+        if (audio.currentTime >= focusEnd - 0.1) {
+            // Loop back to the start of the focus segment
+            audio.currentTime = focusStart;
+            audio.play(); // Assicurati che continui a suonare
+        }
+        return; // Finito, esci da handleTimeUpdate: il FOCUS bypassa la logica di ALLENAMENTO
+    }
+
+    // 2. GESTIONE ALLENAMENTO (Logica che ora funziona solo se NON in Focus)
+    if (isRunning && !isPaused && !isInBreak && !isFocused) {
+      if (audio.currentTime >= effectiveEnd - 0.1) {
+        // --- Logica di fine ripetizione ---
+
+        const nextRepetition = currentRepetition + 1;
+        const totalRepetitions = phaseRepetitions[currentPhase];
+
+        // Caso A: Fase NON completata (ripetizione interna)
+        if (nextRepetition < totalRepetitions) {
+          
+          // 1. Forza il riavvio del loop e la riproduzione (azione sincrona)
+          audio.currentTime = effectiveStart; 
+          audio.play(); 
+          
+          // 2. Aggiorna lo stato della ripetizione (azione asincrona)
+          setCurrentRepetition(nextRepetition);
+          
+        } 
+        // Caso B: Fase COMPLETATA (passaggio al break o fine ciclo)
+        else {
+          const currentIndex = phaseOrder.indexOf(currentPhase);
+          
+          if (currentIndex < phaseOrder.length - 1) {
+            // Passaggio alla pausa (Break)
+            setIsInBreak(true);
+            const nextPhase = phaseOrder[currentIndex + 1];
+
+            audio.pause();
+            setCurrentRepetition(nextRepetition); 
+            
+            setTimeout(() => startBreak(nextPhase), 50);
+          } else {
+            // Fine ciclo completo
+            setIsRunning(false);
+            setCurrentPhase('A');
+            setCurrentRepetition(0);
+            audio.pause();
+            audio.currentTime = effectiveStart;
+          }
+        }
+      }
+    } 
+    // 3. GESTIONE FINE TRACK QUANDO NON IN RUNNING
+    else if (!isRunning && audio.currentTime >= effectiveEnd - 0.1) {
+      audio.currentTime = effectiveStart;
+    }
 };
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
