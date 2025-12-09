@@ -1504,7 +1504,15 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                             <div className="space-y-1.5 text-sm text-neutral-400">
                               <div className="flex items-center gap-2">
                                 <div className="h-2 w-2 rounded-full" style={{ backgroundColor: phaseStyles[currentPhase].accent }}></div>
-                                Velocità: <span className="font-semibold text-white">{Math.round(getCurrentPlaybackRate() * 100)}%</span>
+                                Velocità: <span className="font-semibold text-white"><div>
+  <span className="font-semibold text-white">
+    {isPreviewPlaying 
+        ? '100% - velocità originale' 
+        : `${Math.round(getCurrentPlaybackRate() * 100)}%`}
+                                </span>
+                              </div>
+                              
+                                </span>
                               </div>
                               <div className="flex items-center gap-2">
   <div className="h-2 w-2 rounded-full bg-neutral-500"></div>
