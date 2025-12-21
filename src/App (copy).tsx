@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Play, Pause, SkipForward, RotateCcw, Upload, Scissors, RefreshCcw, Volume2, Target, Music, X, ChevronDown, VolumeX, ChevronUp, Plus, Minus, Info, Download, Activity } from 'lucide-react';
+import { Play, Pause, SkipForward, RotateCcw, Upload, Scissors, RefreshCcw, Volume2, Target, Music, X, ChevronDown, ChevronUp, Plus, Minus, Info, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import * as BeatDetector from 'web-audio-beat-detector';
 
 // IndexedDB Setup
 const DB_NAME = 'ABCDAudioDB';
@@ -15,6 +14,7 @@ interface IndexedDBFile {
   duration: number;
   loopStart: number;
   loopEnd: number;
+  useFullTrack: boolean;
   waveform: number[];
   timestamp: number;
 }
@@ -264,9 +264,6 @@ function App() {
   const [isInBreak, setIsInBreak] = useState(false);
   const [countdownBeat, setCountdownBeat] = useState(0);
   const [volume, setVolume] = useState(0.85);
-  const [audioVolume, setAudioVolume] = useState(0.85);
-  const [clickVolume, setClickVolume] = useState(0.0);
-  const [detectedBPM, setDetectedBPM] = useState<number | null>(null);
   
   type AudioFileData = {
   id: string;
@@ -275,8 +272,8 @@ function App() {
   duration: number;
   loopStart: number;
   loopEnd: number;
+  useFullTrack: boolean;
   waveform: number[];
-  bpm: number | null;
   fileHash?: string; // Per smart matching
   timestamp: number;
 };
@@ -289,6 +286,7 @@ const [audioFileName, setAudioFileName] = useState<string>('');
   const [loopStart, setLoopStart] = useState(0);
   const [loopEnd, setLoopEnd] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [useFullTrack, setUseFullTrack] = useState(true);
   const [waveformData, setWaveformData] = useState<number[]>([]);
   const [isLoadingWaveform, setIsLoadingWaveform] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -304,11 +302,7 @@ const [sessionName, setSessionName] = useState('');
 const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-const [isClickVisual, setIsClickVisual] = useState(false);
   
-const [manualSyncOffset, setManualSyncOffset] = useState(0); // in millisecondi
-
-const [audioOffset, setAudioOffset] = useState(0);
   const audioRef = useRef<HTMLAudioElement>(null);
   const waveformContainerRef = useRef<HTMLDivElement>(null);
   const intervalIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -317,57 +311,6 @@ const [audioOffset, setAudioOffset] = useState(0);
   const nextPhaseOnBreakEndRef = useRef<PhaseKey>('A');
   const breakStartedRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const clickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const nextClickTimeRef = useRef<number>(0);
-  const metronomeLookaheadRef = useRef<number | null>(null);
-  // Trova gli altri useRef e aggiungi questo sotto:
-const clickVolumeRef = useRef(0); // Inizializza a 0 coerentemente con lo stato
-
-const audioVolumeRef = useRef(audioVolume);
-
-const [isAudioMuted, setIsAudioMuted] = useState(false);
-const [isClickMuted, setIsClickMuted] = useState(false); // NON è in mute
-
-// Tieni il Ref aggiornato quando lo stato cambia
-useEffect(() => {
-  audioVolumeRef.current = audioVolume;
-  if (audioRef.current) {
-    audioRef.current.volume = audioVolume;
-  }
-}, [audioVolume]);
-
-useEffect(() => {
-  // Se il metronomo sta andando, lo riavviamo al volo con il nuovo offset
-  if (isRunning && !isPaused && !isInBreak && audioRef.current) {
-    const audio = audioRef.current;
-    const ctx = audioContextRef.current;
-    if (ctx && detectedBPM) {
-      startMetronome(
-        detectedBPM, 
-        getCurrentPlaybackRate(), 
-        ctx.currentTime, 
-        audio.currentTime
-      );
-    }
-  }
-}, [manualSyncOffset]); // Scatta ogni volta che premi + o -
-
-// Aggiungi questi nei useRef in alto se mancano
-const nextNoteTimeRef = useRef(0);
-const timerIDRef = useRef<number | null>(null);
-
-
-// Aggiungi anche questo useEffect subito sotto per tenere sincronizzato il Ref
-useEffect(() => {
-  clickVolumeRef.current = isClickMuted ? 0 : clickVolume;
-}, [clickVolume, isClickMuted]);
-
-useEffect(() => {
-  if (audioRef.current && isPreviewPlaying) {
-    audioRef.current.volume = isAudioMuted ? 0 : audioVolume;
-  }
-}, [isAudioMuted, audioVolume, isPreviewPlaying]);
-
   const playCountSound = (count: number) => {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContextClass) return;
@@ -391,134 +334,6 @@ useEffect(() => {
     osc.start(now);
     osc.stop(now + 0.2);
   };
-
- const playClickSound = (time: number) => {
-  const ctx = audioContextRef.current;
-  if (!ctx) return;
-
-  // Visual: Lampeggio più naturale
-  const now = ctx.currentTime;
-  const delay = (time - now) * 1000;
-  
-  if (delay < 200) {
-    setTimeout(() => {
-      setIsClickVisual(true);
-      // Durata leggermente più lunga (60ms) per essere più "morbido" all'occhio
-      setTimeout(() => setIsClickVisual(false), 60);
-    }, Math.max(0, delay));
-  }
-
-  // Audio: Controllo Mute e Volume
-  const currentVol = isClickMuted ? 0 : clickVolumeRef.current;
-  if (currentVol === 0) return;
-
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-
-  // Ritorno al suono Sine (più morbido/tonale)
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(800, time); // Frequenza meno "trapanante"
-
-  gain.gain.setValueAtTime(0, time);
-  // Attacco più dolce (5ms invece di 2ms)
-  gain.gain.linearRampToValueAtTime(currentVol, time + 0.005);
-  // Rilascio più naturale (decay più lungo)
-  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
-
-  osc.start(time);
-  osc.stop(time + 0.12);
-};
-
-  const startMetronome = async (bpm: number, playbackRate: number, startTime: number, audioCurrentTime: number) => {
-  stopMetronome();
-  if (!audioContextRef.current) {
-    audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-  }
-  const ctx = audioContextRef.current;
-  if (ctx.state === 'suspended') await ctx.resume();
-  
-  // ... resto del calcolo con audioOffset ...
-  
-
-  // Se il BPM è 0 o NaN, fermati qui
-  if (!bpm || isNaN(bpm)) {
-    console.error("❌ BPM non valido:", bpm);
-    return;
-  }
-
-  const secondsPerBeat = 60.0 / (bpm * playbackRate);
-  
-  // Calcolo della posizione nella griglia
-  const timeRelativeToFirstBeat = audioCurrentTime - audioOffset;
-  const timeInCurrentBeat = ((timeRelativeToFirstBeat % secondsPerBeat) + secondsPerBeat) % secondsPerBeat;
-  let timeToNextBeat = secondsPerBeat - timeInCurrentBeat;
-
-  if (timeToNextBeat < 0.05) timeToNextBeat += secondsPerBeat;
-
-  nextNoteTimeRef.current = ctx.currentTime + timeToNextBeat;
-  console.log("⏱️ Primo colpo programmato tra:", timeToNextBeat.toFixed(3), "secondi");
-// Dentro startMetronome
-// Convertiamo manualSyncOffset da millisecondi a secondi (es: 10ms -> 0.01s)
-const offsetCorrection = manualSyncOffset / 1000;
-
-nextNoteTimeRef.current = ctx.currentTime + timeToNextBeat + offsetCorrection;
-  const scheduler = () => {
-    // Se non entra in questo while, il pallino non lampeggerà mai
-    while (nextNoteTimeRef.current < ctx.currentTime + 0.2) {
-      playClickSound(nextNoteTimeRef.current);
-      nextNoteTimeRef.current += secondsPerBeat;
-    }
-    timerIDRef.current = window.setTimeout(scheduler, 25.0) as any;
-  };
-
-  scheduler();
-};
-
-const stopMetronome = () => {
-  if (timerIDRef.current) {
-    clearTimeout(timerIDRef.current);
-    timerIDRef.current = null;
-  }
-};
-
-// Questa funzione ora restituisce sia il BPM che l'Offset del primo battito
-const analyzeAudioMetadata = async (audioBuffer: AudioBuffer) => {
-  try {
-    console.log('🎯 Analisi audio profonda in corso...');
-    
-    // 1. Rilevamento BPM
-    const result = await BeatDetector.analyze(audioBuffer);
-    let bpm = typeof result === 'number' ? result : result.tempo;
-    bpm = Math.round(bpm);
-
-    // Logica DJ (correzione raddoppio/metà)
-    if (bpm < 68) bpm *= 2; 
-    if (bpm > 185) bpm /= 2;
-
-    // 2. Rilevamento Offset (Primo Transiente)
-    const channelData = audioBuffer.getChannelData(0);
-    const sampleRate = audioBuffer.sampleRate;
-    let firstBeatOffset = 0;
-    
-    // Cerchiamo il primo picco che superi una soglia di volume (0.08)
-    for (let i = 0; i < Math.min(channelData.length, sampleRate * 2); i++) {
-      if (Math.abs(channelData[i]) > 0.08) {
-        firstBeatOffset = i / sampleRate;
-        break;
-      }
-    }
-
-    if (!bpm || isNaN(bpm)) bpm = 120;
-
-    console.log(`✅ Risultati: ${bpm} BPM, Start Offset: ${firstBeatOffset.toFixed(3)}s`);
-    return { bpm, offset: firstBeatOffset };
-  } catch (error) {
-    console.error('❌ Errore analisi:', error);
-    return { bpm: 120, offset: 0 };
-  }
-};
 
   const getPhasePercentage = (phase: PhaseKey) => phasePercentages[phase] / 100;
   
@@ -605,11 +420,6 @@ const analyzeAudioMetadata = async (audioBuffer: AudioBuffer) => {
     const max = Math.max(...filteredData);
     waveformData = filteredData.map(n => n / max);
     
-    // Analisi BPM e Offset
-const { bpm, offset } = await analyzeAudioMetadata(audioBuffer);
-setDetectedBPM(bpm);
-setAudioOffset(offset); // Assicurati di avere const [audioOffset, setAudioOffset] = useState(0); nei tuoi stati
-    
     // Ottieni duration
     const tempAudio = new Audio(url);
     await new Promise((resolve) => {
@@ -623,8 +433,8 @@ setAudioOffset(offset); // Assicurati di avere const [audioOffset, setAudioOffse
       duration: tempAudio.duration,
       loopStart: 0,
       loopEnd: tempAudio.duration,
+      useFullTrack: true,
       waveform: waveformData,
-      bpm: bpm,
       timestamp: Date.now()
     };
     console.log('🔵 Tentativo salvataggio in IndexedDB...');
@@ -637,6 +447,7 @@ setAudioOffset(offset); // Assicurati di avere const [audioOffset, setAudioOffse
       duration: tempAudio.duration,
       loopStart: 0,
       loopEnd: tempAudio.duration,
+      useFullTrack: true,
       waveform: waveformData,
       timestamp: Date.now()
     });
@@ -655,50 +466,18 @@ setAudioOffset(offset); // Assicurati di avere const [audioOffset, setAudioOffse
   event.target.value = '';
 };
 
-const loadFile = async (fileData: AudioFileData) => {
+const loadFile = (fileData: AudioFileData) => {
   handleReset();
   setCurrentFileId(fileData.id);
   setAudioFile(fileData.url);
   setAudioFileName(fileData.name);
   setAudioDuration(fileData.duration);
-  setLoopStart(fileData.loopStart ?? 0);
-  // ✅ CORREZIONE: Se loopEnd esiste ed è diverso da 0, usa quello. 
-  // Altrimenti (file nuovo) usa la durata totale.
-  if (fileData.loopEnd && fileData.loopEnd > 0) {
-    setLoopEnd(fileData.loopEnd);
-  } else {
-    setLoopEnd(fileData.duration);
-  }
-  
+  setLoopStart(fileData.loopStart);
+  setLoopEnd(fileData.loopEnd);
+  setUseFullTrack(fileData.useFullTrack);
   setWaveformData(fileData.waveform);
-
-  // Se il BPM è già presente lo usiamo, altrimenti ricalcoliamo
-  if (fileData.bpm) {
-    setDetectedBPM(fileData.bpm);
-  } else {
-    console.log('🔄 Rilevamento BPM mancante per:', fileData.name);
-    try {
-      const response = await fetch(fileData.url);
-      const arrayBuffer = await response.arrayBuffer();
-      
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-      
-      const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
-      const { bpm, offset } = await analyzeAudioMetadata(audioBuffer);
-      
-      setDetectedBPM(bpm);
-      setAudioOffset(offset);
-      
-      // Aggiorniamo l'oggetto in locale così non lo richiede più
-      fileData.bpm = bpm; 
-    } catch (err) {
-      console.error('Errore ricalcolo BPM:', err);
-      setDetectedBPM(120); // Fallback
-    }
-  }
 };
+
 const removeFile = async (id: string) => {
   try {
     
@@ -755,7 +534,7 @@ const exportSession = () => {
       duration: f.duration,
       loopStart: f.loopStart,
       loopEnd: f.loopEnd,
-      bpm: f.bpm,
+      useFullTrack: f.useFullTrack,
       timestamp: f.timestamp
     })),
     phaseRepetitions,
@@ -811,10 +590,10 @@ const importSession = async (event: React.ChangeEvent<HTMLInputElement>) => {
   url,
   name: matchedDB.name,
   duration: matchedDB.duration,
-  loopStart: importedFile.loopStart,
-  loopEnd: importedFile.loopEnd,
+  loopStart: importedFile.loopStart,  // ✅ Dalla playlist
+  loopEnd: importedFile.loopEnd,      // ✅ Dalla playlist
+  useFullTrack: importedFile.useFullTrack, // ✅ Dalla playlist
   waveform: matchedDB.waveform,
-  bpm: importedFile.bpm,
   timestamp: Date.now()
 };
         } else {
@@ -934,8 +713,8 @@ const handleReloadFileForImport = async (pendingFile: any, event: React.ChangeEv
       duration: tempAudio.duration,
       loopStart: pendingFile.loopStart,
       loopEnd: pendingFile.loopEnd,
+      useFullTrack: pendingFile.useFullTrack,
       waveform: waveformData,
-      bpm: pendingFile.bpm,
       timestamp: Date.now()
     };
     
@@ -947,6 +726,7 @@ const handleReloadFileForImport = async (pendingFile: any, event: React.ChangeEv
       duration: tempAudio.duration,
       loopStart: pendingFile.loopStart,
       loopEnd: pendingFile.loopEnd,
+      useFullTrack: pendingFile.useFullTrack,
       waveform: waveformData,
       timestamp: Date.now()
     });
@@ -990,27 +770,24 @@ useEffect(() => {
   if (currentFileId && audioFile) {
     setAudioFiles(prev => prev.map(f => 
       f.id === currentFileId 
-        ? { ...f, loopStart, loopEnd, waveform: waveformData, bpm: detectedBPM }
+        ? { ...f, loopStart, loopEnd, useFullTrack, waveform: waveformData }
         : f
     ));
   }
-}, [loopStart, loopEnd, currentFileId, detectedBPM]);
+}, [loopStart, loopEnd, useFullTrack, currentFileId]);
 
   useEffect(() => {
-  const audio = audioRef.current;
-  if (!audio) return;
+    const audio = audioRef.current;
+    if (!audio) return;
 
-  const handleLoadedMetadata = () => {
-    setAudioDuration(audio.duration);
-    
-    // 🛡️ PROTEZIONE: Imposta la durata solo se loopEnd è ancora a zero o indefinito.
-    // Se ha già un valore (quello che abbiamo messo in loadFile), NON toccarlo.
-    setLoopEnd(prev => (prev === 0 || prev === undefined) ? audio.duration : prev);
-  };
+    const handleLoadedMetadata = () => {
+      setAudioDuration(audio.duration);
+      setLoopEnd(audio.duration);
+    };
 
-  audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-  return () => audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-}, [audioFile]);
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    return () => audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+  }, [audioFile]);
   
   // Carica file da IndexedDB all'avvio
 
@@ -1025,68 +802,6 @@ const updateStorageInfo = async () => {
     console.error('Error getting storage info:', error);
   }
 };
-
-useEffect(() => {
-  const audio = audioRef.current;
-  if (!audio) return;
-
-  // Se siamo in preview o in running, aggiorna il volume "al volo"
-  // Senza questo, React cercherebbe di ricaricare l'intera logica di play
-  const targetVolume = isAudioMuted ? 0 : audioVolume;
-  
-  if (audio.volume !== targetVolume) {
-    audio.volume = targetVolume;
-  }
-}, [audioVolume, isAudioMuted]); 
-// Nota: Non mettiamo isPreviewPlaying tra le dipendenze per evitare restart
-
-useEffect(() => {
-  const audio = audioRef.current;
-  if (!audio || !audioFile) return;
-
-  // Se l'app è in stato RUNNING (fasi attive)
-  if (isRunning && !isPaused && !isInBreak) {
-    audio.playbackRate = getCurrentPlaybackRate();
-    audio.volume = isAudioMuted ? 0 : audioVolume;
-
-    audio.play().then(() => {
-      console.log("🎵 Riproduzione avviata, sincronizzo metronomo...");
-      if (detectedBPM) {
-        // Inizializziamo il contesto audio se serve
-        if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        }
-        const ctx = audioContextRef.current;
-        if (ctx.state === 'suspended') ctx.resume();
-
-        // CHIAMATA CORRETTA A 4 PARAMETRI
-        startMetronome(
-          detectedBPM, 
-          getCurrentPlaybackRate(), 
-          ctx.currentTime, 
-          audio.currentTime
-        );
-      }
-    }).catch(err => console.error("Errore Play:", err));
-    
-  } else {
-    // Se siamo in pausa o stop
-    audio.pause();
-    stopMetronome();
-  }
-  
-  // Queste dipendenze fanno sì che se cambi volume o velocità durante l'esercizio,
-  // l'audio si aggiorni senza fermarsi (grazie ai Ref che abbiamo usato prima)
-}, [isRunning, isPaused, isInBreak, currentPhase, audioFile, detectedBPM]);
-
-// Gestore volumi audio "chirurgico"
-useEffect(() => {
-  if (audioRef.current) {
-    // Applichiamo il volume direttamente all'hardware (DOM)
-    // Questo non causa ri-render o blocchi della preview
-    audioRef.current.volume = isAudioMuted ? 0 : audioVolume;
-  }
-}, [audioVolume, isAudioMuted]);
 
 // Salva modifiche loop in IndexedDB
 // SOSTITUISCI l'useEffect (righe ~756-785) con questo:
@@ -1115,10 +830,11 @@ useEffect(() => {
       await saveFileToIndexedDB({
         id: currentFileId,
         name: audioFileName,
-        blob: existingFile.blob,
+        blob: existingFile.blob, // ✅ USA IL BLOB ORIGINALE
         duration: audioDuration,
         loopStart,
         loopEnd,
+        useFullTrack,
         waveform: waveformData,
         timestamp: Date.now()
       });
@@ -1132,7 +848,8 @@ useEffect(() => {
   const timeoutId = setTimeout(saveChanges, 3000);
   
   return () => clearTimeout(timeoutId);
-}, [loopStart, loopEnd, currentFileId, audioFileName, audioDuration, waveformData, audioFiles]);
+}, [loopStart, loopEnd, useFullTrack, currentFileId, audioFileName, audioDuration, waveformData, audioFiles]);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !audioFile) return;
@@ -1144,8 +861,10 @@ useEffect(() => {
     setCurrentTime(audio.currentTime);
     requestAnimationFrame(() => setCurrentTime(audio.currentTime));
 
-const effectiveEnd = loopEnd;
-    const effectiveStart = loopStart;
+    // effectiveEnd e effectiveStart vengono calcolati qui, ma il blocco FOCUS li ignorerà
+    // per forzare l'uso di loopStart/loopEnd per la ripetizione.
+    const effectiveEnd = useFullTrack ? audioDuration : loopEnd;
+    const effectiveStart = useFullTrack ? 0 : loopStart;
 
     // 1. GESTIONE PREVIEW (Reset del pulsante alla fine)
     if (isPreviewPlaying) {
@@ -1220,40 +939,28 @@ const effectiveEnd = loopEnd;
     }
 };
 
-   audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('timeupdate', handleTimeUpdate);
     return () => audio.removeEventListener('timeupdate', handleTimeUpdate);
-  }, [audioFile, loopStart, loopEnd, audioDuration, isRunning, isPaused, isInBreak, isFocused, currentRepetition, phaseRepetitions, currentPhase]);
+  }, [audioFile, loopStart, loopEnd, audioDuration, useFullTrack, isRunning, isPaused, isInBreak, isFocused, currentRepetition, phaseRepetitions, currentPhase]);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !audioFile) return;
 
     if (isRunning && !isPaused && !isInBreak) {
       audio.playbackRate = getCurrentPlaybackRate();
-audio.volume = isAudioMuted ? 0 : audioVolume;
-      audio.volume = audioVolume; // Forza il volume attuale all'avvio
-
-
-      audio.play().then(() => {
-  if (detectedBPM) {
-    const ctx = audioContextRef.current;
-    // Usiamo ctx.currentTime come tempo di riferimento del sistema audio
-    // e audio.currentTime come posizione attuale della canzone
-    startMetronome(
-      detectedBPM, 
-      getCurrentPlaybackRate(), 
-      ctx?.currentTime || 0, 
-      audio.currentTime
-    );
-  }
-}).catch(err => console.error('Audio play error:', err));
+      audio.play().catch(err => console.error('Audio play error:', err));
     } else {
       audio.pause();
-      stopMetronome();
     }
-    
-    // AGGIUNGI audioVolume qui sotto nelle dipendenze
-  }, [isRunning, isPaused, isInBreak, currentPhase, phasePercentages, audioFile, detectedBPM]);
-    
+  }, [isRunning, isPaused, isInBreak, currentPhase, phasePercentages, audioFile]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.volume = volume;
+    }
+  }, [volume]);
   
   // Carica file da IndexedDB all'avvio
 useEffect(() => {
@@ -1263,15 +970,15 @@ useEffect(() => {
       const files = await getAllFilesFromIndexedDB();
       console.log('📦 File caricati da IndexedDB:', files.length);
       
-     const loadedFiles: AudioFileData[] = files.map(f => ({
+      const loadedFiles: AudioFileData[] = files.map(f => ({
         id: f.id,
         url: URL.createObjectURL(f.blob),
         name: f.name,
         duration: f.duration,
         loopStart: f.loopStart,
         loopEnd: f.loopEnd,
+        useFullTrack: f.useFullTrack,
         waveform: f.waveform,
-        bpm: null,
         timestamp: f.timestamp
       }));
       
@@ -1354,33 +1061,20 @@ const [previewTime, setPreviewTime] = useState(0);
     
     countdownTimeoutsRef.current = [t1, t2, t3, t4, t5, t6, finalTimeout];
   };
- const handlePreviewLoop = () => {
+  const handlePreviewLoop = () => {
   const audio = audioRef.current;
   if (!audio || isRunning) return;
-
+  
   if (isPreviewPlaying) {
     audio.pause();
-    stopMetronome();
     setIsPreviewPlaying(false);
   } else {
-    // 1. Setup iniziale
-    audio.currentTime = loopStart;
+    const effectiveStart = useFullTrack ? 0 : loopStart;
+    audio.currentTime = effectiveStart;
     audio.playbackRate = 1;
-    audio.volume = isAudioMuted ? 0 : audioVolume;
-
-    // 2. Esegui il play
-    audio.play().then(() => {
-      if (detectedBPM) {
-        const ctx = audioContextRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
-        audioContextRef.current = ctx;
-        // Chiamata metronomo con i 4 parametri corretti
-        startMetronome(detectedBPM, 1, ctx.currentTime, audio.currentTime);
-      }
-      setIsPreviewPlaying(true);
-    }).catch(err => {
-      // Ignora l'errore di interruzione (è quello che causa il freeze se non gestito)
-      console.warn("Preview playback interrotto:", err);
-    });
+    setPreviewTime(effectiveStart); // ✅ Inizializza previewTime
+    audio.play();
+    setIsPreviewPlaying(true);
   }
 };
   useEffect(() => {
@@ -1417,7 +1111,8 @@ const [previewTime, setPreviewTime] = useState(0);
       setCurrentRepetition(0);
       
       if (audioRef.current) {
-        audioRef.current.currentTime = loopStart;
+        const effectiveStart = useFullTrack ? 0 : loopStart;
+        audioRef.current.currentTime = effectiveStart;
       }
       
       setTimeout(() => startBreak('A'), 50);
@@ -1429,7 +1124,6 @@ const [previewTime, setPreviewTime] = useState(0);
     countdownTimeoutsRef.current = [];
     if (intervalIdRef.current) clearInterval(intervalIdRef.current);
     if (globalIntervalRef.current) clearInterval(globalIntervalRef.current);
-    stopMetronome();
     
     setIsRunning(false);
     setIsPaused(false);
@@ -1443,7 +1137,8 @@ const [previewTime, setPreviewTime] = useState(0);
     
     if (audioRef.current) {
       audioRef.current.pause();
-      audioRef.current.currentTime = loopStart;
+      const effectiveStart = useFullTrack ? 0 : loopStart;
+      audioRef.current.currentTime = effectiveStart;
     }
   };
 
@@ -1467,7 +1162,7 @@ const [previewTime, setPreviewTime] = useState(0);
       
       if (audioRef.current) {
         audioRef.current.pause();
-        audioRef.current.currentTime = loopStart;
+        audioRef.current.currentTime = useFullTrack ? 0 : loopStart;
       }
       
       setTimeout(() => startBreak(nextPhase), 50);
@@ -1485,7 +1180,7 @@ const [previewTime, setPreviewTime] = useState(0);
     
     if (audioRef.current) {
       audioRef.current.pause();
-      audioRef.current.currentTime = loopStart;
+      audioRef.current.currentTime = useFullTrack ? 0 : loopStart;
     }
     
     setTimeout(() => {
@@ -1543,7 +1238,6 @@ const [previewTime, setPreviewTime] = useState(0);
 
   const clearAudioFile = () => {
   handleReset();
-  stopMetronome();
   setAudioFiles([]);
   setCurrentFileId(null);
   setAudioFile(null);
@@ -1553,7 +1247,7 @@ const [previewTime, setPreviewTime] = useState(0);
   setLoopEnd(0);
   setCurrentTime(0);
   setWaveformData([]);
-  setDetectedBPM(null);
+  setUseFullTrack(true);
   setCurrentRepetition(0);
 };
 
@@ -1830,18 +1524,6 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                                 <Music size={12} className="text-neutral-500" />
                                 <span className="truncate">{audioFileName}</span>
                               </div>
-                              {detectedBPM ? (
-    <div className="flex flex-col items-center">
-      <span className="text-white text-lg">
-        {Math.round(detectedBPM * getCurrentPlaybackRate())} BPM
-      </span>
-      <span className="text-s text-neutral-500">
-        (Originale: {detectedBPM} BPM)
-      </span>
-    </div>
-  ) : (
-    "Calcolo BPM..."
-  )}
                             </div>
                           </div>
                           
@@ -1876,81 +1558,6 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                     )}
                   </AnimatePresence>
                 </motion.section>
-
-{/* BPM Display */}
-
-                  <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <div className="text-xs uppercase tracking-[0.3em] text-blue-300 mb-1">
-                          Tempo Rilevato
-                        </div>
-                        <div className="text-xs text-neutral-400">
-                          Funzione Sperimentale:
-                        </div>
-<div className="text-xs text-neutral-400">
-                          potrebbe non funzionare correttamente
-                        </div>
-                      </div>
-{/* Indicatore Visivo Click */}
-<div className="flex items-center gap-2 mb-2">
-  <div className={`w-3 h-3 rounded-full transition-all duration-75 ease-out ${
-  isClickVisual ? 'bg-[#5dda9d] scale-125 shadow-[0_0_10px_#5dda9d]' : 'bg-white/10 scale-100'
-}`} />
-  <span className="text-[15px] text-neutral-500 font-bold uppercase tracking-tighter">
-    Visual Click
-  </span>
-</div>
-<div className="flex flex-col items-center gap-1 mt-4 p-2 bg-white/5 rounded-lg border border-white/10">
-  <span className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest">
-    Sync Calibration
-  </span>
-  <div className="flex items-center gap-3">
-    {/* Tasto MENO -10ms */}
-    <button 
-      onClick={() => setManualSyncOffset(prev => prev - 10)}
-      className="p-1 hover:bg-white/10 rounded transition-colors text-[#5dda9d]"
-      title="Anticipa click (-10ms)"
-    >
-      <Minus size={18} />
-    </button>
-    
-    {/* Display Millisecondi */}
-    <div className="flex flex-col items-center min-w-[60px]">
-      <span className={`text-xs font-mono font-bold ${manualSyncOffset !== 0 ? 'text-[#5dda9d]' : 'text-neutral-400'}`}>
-        {manualSyncOffset > 0 ? `+${manualSyncOffset}` : manualSyncOffset}ms
-      </span>
-    </div>
-
-    {/* Tasto PIÙ +10ms */}
-    <button 
-      onClick={() => setManualSyncOffset(prev => prev + 10)}
-      className="p-1 hover:bg-white/10 rounded transition-colors text-[#5dda9d]"
-      title="Ritarda click (+10ms)"
-    >
-      <Plus size={18} />
-    </button>
-  </div>
-
-  {/* Tasto RESET sempre visibile */}
-  <button 
-    onClick={() => setManualSyncOffset(0)}
-    className={`mt-1 text-[9px] uppercase tracking-tighter transition-opacity ${
-      manualSyncOffset === 0 ? 'opacity-30 cursor-default' : 'opacity-100 hover:text-[#5dda9d]'
-    }`}
-  >
-    Reset
-  </button>
-
-</div>
-                      <div className="rounded-lg border border-blue-500/40 bg-blue-500/20 px-4 py-2 text-center">
-                        <div className="text-2xl font-bold text-blue-100">
-                          {detectedBPM || '---'}
-                        </div>
-                        <div className="text-[10px] text-blue-300">BPM</div>
-                      </div>
-                    </div>
-                  </div>
 
                 <motion.div
                   variants={scaleIn}
@@ -1988,8 +1595,8 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
     <div className="relative flex h-full items-center justify-center gap-0 px-1">
       {waveformData.map((amplitude, index) => {
   const isInLoop = 
-    (index / waveformData.length) * audioDuration >= loopStart &&
-    (index / waveformData.length) * audioDuration <= loopEnd;
+    (index / waveformData.length) * audioDuration >= (useFullTrack ? 0 : loopStart) &&
+    (index / waveformData.length) * audioDuration <= (useFullTrack ? audioDuration : loopEnd);
   const isPassed = (index / waveformData.length) * audioDuration <= currentTime;
   
   // Calcola il colore gradiente ABCD per la preview (quando non è running)
@@ -2076,117 +1683,120 @@ const getPreviewGradientColor = () => {
   )}
 </div>
 
-                  {/* Faders Volume */}
-                  <div className="mt-4 space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
-                    <div className="text-xs uppercase tracking-[0.3em] text-neutral-500 mb-3">
-                      Mix Volumi
-                    </div>
-                    
-                   <div className="flex flex-col gap-4">
-  {/* Fader Audio Traccia */}
-  <div className="flex items-center gap-3 bg-white/5 p-2 rounded-xl border border-white/5">
-    <button 
-      onClick={() => setIsAudioMuted(!isAudioMuted)}
-      className={`p-2 rounded-lg transition-all ${isAudioMuted ? 'text-red-400 bg-red-400/10' : 'text-neutral-400 hover:bg-white/10'}`}
-      title="Mute Audio"
-    >
-      {isAudioMuted ? <VolumeX size={20} /> : <Music size={20} />}
-    </button>
-    
-    <div className="flex flex-col flex-1 gap-1">
-      <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold ml-1">Traccia</span>
+                  {/* Range Sliders per Loop */}
+                  {!useFullTrack && (
+  <div className="mt-4 space-y-4">
+    {/* Visualizzazione grafica del range */}
+    <div className="relative h-3 rounded-xl bg-white/5">
+      <div
+        className="absolute h-full rounded-xl bg-gradient-to-r from-emerald-500/40 to-red-500/40"
+        style={{
+          left: `${(loopStart / audioDuration) * 100}%`,
+          width: `${((loopEnd - loopStart) / audioDuration) * 100}%`
+        }}
+      />
+      <div
+        className="absolute top-1/2 h-5 w-5 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-emerald-400 bg-emerald-500 shadow-lg cursor-pointer"
+        style={{ left: `${(loopStart / audioDuration) * 100}%` }}
+      />
+      <div
+        className="absolute top-1/2 h-5 w-5 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-red-400 bg-red-500 shadow-lg cursor-pointer"
+        style={{ left: `${(loopEnd / audioDuration) * 100}%` }}
+      />
+    </div>
+
+    {/* Slider START separato */}
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-semibold text-emerald-400">START</span>
+        <span className="tabular-nums text-neutral-400">{formatTime(loopStart)}</span>
+      </div>
       <input
         type="range"
         min="0"
-        max="1"
-        step="0.01"
-        value={audioVolume}
-        onChange={(e) => setAudioVolume(parseFloat(e.target.value))}
-        className="w-full accent-[#5dda9d] h-1.5"
+        max={audioDuration}
+        step="0.1"
+        value={loopStart}
+        onChange={(e) => setLoopStart(Math.min(Number(e.target.value), loopEnd - 1))}
+        disabled={isRunning && !isPaused}
+        className="w-full accent-emerald-500"
       />
     </div>
-    
-    <span className="w-10 text-right text-xs text-neutral-500 tabular-nums font-medium">
-      {isAudioMuted ? 'OFF' : `${Math.round(audioVolume * 100)}%`}
-    </span>
-  </div>
 
-  {/* Fader Metronomo (Click) */}
-  <div className="flex items-center gap-3 bg-white/5 p-2 rounded-xl border border-white/5">
-    <button 
-      onClick={() => setIsClickMuted(!isClickMuted)}
-      className={`p-2 rounded-lg transition-all ${isClickMuted ? 'text-red-400 bg-red-400/10' : 'text-neutral-400 hover:bg-white/10'}`}
-      title="Mute Click"
-    >
-      {isClickMuted ? <VolumeX size={20} /> : <Activity size={20} />}
-    </button>
-    
-    <div className="flex flex-col flex-1 gap-1">
-      <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold ml-1">Metronomo</span>
+    {/* Slider END separato */}
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-semibold text-red-400">END</span>
+        <span className="tabular-nums text-neutral-400">{formatTime(loopEnd)}</span>
+      </div>
       <input
         type="range"
         min="0"
-        max="1"
-        step="0.01"
-        value={clickVolume}
-        onChange={(e) => setClickVolume(parseFloat(e.target.value))}
-        className="w-full accent-[#5dda9d] h-1.5"
+        max={audioDuration}
+        step="0.1"
+        value={loopEnd}
+        onChange={(e) => setLoopEnd(Math.max(Number(e.target.value), loopStart + 1))}
+        disabled={isRunning && !isPaused}
+        className="w-full accent-red-500"
       />
     </div>
-    
-    <span className="w-10 text-right text-xs text-neutral-500 tabular-nums font-medium">
-      {isClickMuted ? 'OFF' : `${Math.round(clickVolume * 100)}%`}
-    </span>
   </div>
-</div>
-</div>
+)}
 
-                  {/* Range Slider per Loop */}
-                  <div className="mt-4 space-y-4">
-                    <div className="text-xs uppercase tracking-[0.3em] text-neutral-500 mb-3">
-                      Loop Range
-                    </div>
-                    
-                    {/* Visualizzazione grafica del range */}
-                    <div className="relative h-2 rounded-xl bg-white/5 mb-2">
-                      <div
-                        className="absolute h-full rounded-xl bg-gradient-to-r from-emerald-500/40 to-red-500/40"
-                        style={{
-                          left: `${(loopStart / audioDuration) * 100}%`,
-                          width: `${((loopEnd - loopStart) / audioDuration) * 100}%`
+                  <div className="space-y-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={useFullTrack}
+                        onChange={(e) => {
+                          setUseFullTrack(e.target.checked);
+                          if (e.target.checked) {
+                            setLoopStart(0);
+                            setLoopEnd(audioDuration);
+                          }
                         }}
+                        disabled={isRunning && !isPaused}
+                        className="h-5 w-5 rounded accent-[#3e5c55]"
                       />
-                      
-                      {/* Marker START */}
-                      <div
-                        className="absolute top-1/2 h-6 w-8 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-emerald-400 bg-emerald-500 shadow-lg cursor-grab active:cursor-grabbing flex items-center justify-center"
-                        style={{ left: `${(loopStart / audioDuration) * 100}%` }}
-                        onMouseDown={(e) => handleLoopMarkerDrag('start', e)}
-                      >
-                        <Scissors size={14} className="text-white" />
+                      <span className="text-sm">Usa traccia completa</span>
+                    </label>
+
+                    {!useFullTrack && (
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-2 block text-xs uppercase tracking-[0.3em] text-neutral-500">
+                            Inizio Loop (sec)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max={loopEnd - 1}
+                            step="0.1"
+                            value={loopStart.toFixed(1)}
+                            onChange={(e) => setLoopStart(Math.max(0, Math.min(Number(e.target.value), loopEnd - 1)))}
+                            disabled={isRunning && !isPaused}
+                            className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white disabled:opacity-50"
+                          />
+                        </div>
+                        
+                        <div>
+                          <label className="mb-2 block text-xs uppercase tracking-[0.3em] text-neutral-500">
+                            Fine Loop (sec)
+                          </label>
+                          <input
+                            type="number"
+                            min={loopStart + 1}
+                            max={audioDuration}
+                            step="0.1"
+                            value={loopEnd.toFixed(1)}
+                            onChange={(e) => setLoopEnd(Math.min(audioDuration, Math.max(Number(e.target.value), loopStart + 1)))}
+                            disabled={isRunning && !isPaused}
+                            className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white disabled:opacity-50"
+                          />
+                        </div>
                       </div>
-                      
-                      {/* Marker END */}
-                      <div
-                        className="absolute top-1/2 h-6 w-8 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-red-400 bg-red-500 shadow-lg cursor-grab active:cursor-grabbing flex items-center justify-center"
-                        style={{ left: `${(loopEnd / audioDuration) * 100}%` }}
-                        onMouseDown={(e) => handleLoopMarkerDrag('end', e)}
-                      >
-                        <Scissors size={14} className="text-white" />
-                      </div>
-                    </div>
-                    
-                    <div className="flex justify-between text-xs text-neutral-400">
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-emerald-400">START</span>
-                        <span className="tabular-nums">{formatTime(loopStart)}</span>
-                      </div>
-                      <div className="flex flex-col text-right">
-                        <span className="font-semibold text-red-400">END</span>
-                        <span className="tabular-nums">{formatTime(loopEnd)}</span>
-                      </div>
-                    </div>
-                  </div> 
+                    )}
+                  </div>
                 </motion.div>
 
                 <motion.div
@@ -2195,7 +1805,6 @@ const getPreviewGradientColor = () => {
                   animate="visible"
                   className="space-y-5 rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6 shadow-[0_18px_40px_rgba(5,7,9,0.4)] backdrop-blur"
                 >
-
                   <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Controlli</span>
                   
                   <div className="flex items-center gap-4">
@@ -2252,7 +1861,19 @@ const getPreviewGradientColor = () => {
                     </button>
                   </div>
 
-                 
+                  <div className="flex items-center gap-3 rounded-2xl border border-white/5 bg-white/5 px-4 py-3">
+                    <Volume2 size={16} className="text-neutral-400" />
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={volume}
+                      onChange={(e) => setVolume(Number(e.target.value))}
+                      className="flex-1 accent-[#3e5c55]"
+                    />
+                    <span className="w-10 text-right text-xs text-neutral-400 tabular-nums">{Math.round(volume * 100)}%</span>
+                  </div>
                 </motion.div>
               </div>
 
@@ -2693,7 +2314,7 @@ const getPreviewGradientColor = () => {
               </div>
               <div className="mt-1 text-xs text-neutral-500">
                 Durata: {formatTime(pendingFile.duration)} • 
-                Loop: {formatTime(pendingFile.loopStart)} - {formatTime(pendingFile.loopEnd)}
+                Loop: {pendingFile.useFullTrack ? 'Traccia completa' : `${formatTime(pendingFile.loopStart)} - ${formatTime(pendingFile.loopEnd)}`}
               </div>
             </div>
             
