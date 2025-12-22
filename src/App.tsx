@@ -304,7 +304,8 @@ const [sessionName, setSessionName] = useState('');
 const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-const [isClickVisual, setIsClickVisual] = useState(false);
+
+const visualClickRef = useRef<HTMLDivElement>(null);
   
 const [manualSyncOffset, setManualSyncOffset] = useState(0); // in millisecondi
 
@@ -328,6 +329,42 @@ const audioVolumeRef = useRef(audioVolume);
 const [isAudioMuted, setIsAudioMuted] = useState(false);
 const [isClickMuted, setIsClickMuted] = useState(false); // NON è in mute
 
+// Stati per il Tap Tempo
+const [originalBPM, setOriginalBPM] = useState<number | null>(null);
+const [tapTimes, setTapTimes] = useState<number[]>([]);
+
+// Funzione Tap Tempo
+const handleTap = () => {
+  const now = performance.now();
+  setTapTimes(prev => {
+    const newTaps = [...prev, now].slice(-10);
+    if (newTaps.length >= 2) {
+      const intervals = [];
+      for (let i = 1; i < newTaps.length; i++) {
+        intervals.push(newTaps[i] - newTaps[i - 1]);
+      }
+      const avgInterval = intervals.reduce((a, b) => a + b) / intervals.length;
+      const newBpm = parseFloat((60000 / avgInterval).toFixed(2));
+      
+      // Aggiorna il BPM senza fermare nulla
+      setDetectedBPM(newBpm);
+    }
+    return newTaps;
+  });
+};
+
+// Funzione Reset BPM
+const resetToOriginalBPM = () => {
+  if (originalBPM) {
+    setDetectedBPM(originalBPM);
+    setManualSyncOffset(0); // Opzionale: resetta anche l'offset
+  }
+};
+// Funzioni per l'Offset
+const adjustOffset = (amount: number) => {
+  setManualSyncOffset(prev => prev + amount);
+};
+
 // Tieni il Ref aggiornato quando lo stato cambia
 useEffect(() => {
   audioVolumeRef.current = audioVolume;
@@ -336,21 +373,47 @@ useEffect(() => {
   }
 }, [audioVolume]);
 
+
+// --- 1. AGGIUNGI QUESTO SOPRA startMetronome ---
+const workerRef = useRef<Worker | null>(null);
+
 useEffect(() => {
-  // Se il metronomo sta andando, lo riavviamo al volo con il nuovo offset
-  if (isRunning && !isPaused && !isInBreak && audioRef.current) {
-    const audio = audioRef.current;
+  // Creiamo un "mini-worker" inline per gestire il tempo in un thread separato
+  const workerCode = `
+    let timerID = null;
+    let interval = 25;
+    self.onmessage = (e) => {
+      if (e.data === "start") {
+        timerID = setInterval(() => postMessage("tick"), interval);
+      } else if (e.data === "stop") {
+        clearInterval(timerID);
+        timerID = null;
+      }
+    };
+  `;
+  const blob = new Blob([workerCode], { type: 'application/javascript' });
+  workerRef.current = new Worker(URL.createObjectURL(blob));
+  
+  return () => workerRef.current?.terminate();
+}, []);
+
+// Aggiorna questo useEffect (intorno alla riga 300)
+useEffect(() => {
+  // Se il metronomo sta andando, ricalcoliamo la posizione dei beat al volo
+  if (isRunning && !isPaused && !isInBreak && audioRef.current && detectedBPM) {
     const ctx = audioContextRef.current;
-    if (ctx && detectedBPM) {
+    if (ctx) {
+      // Non chiamiamo stopMetronome() bruscamente, ma startMetronome 
+      // ricalcolerà i tempi basandosi sulla posizione attuale dell'audio
       startMetronome(
         detectedBPM, 
         getCurrentPlaybackRate(), 
         ctx.currentTime, 
-        audio.currentTime
+        audioRef.current.currentTime
       );
     }
   }
-}, [manualSyncOffset]); // Scatta ogni volta che premi + o -
+}, [manualSyncOffset, detectedBPM]); // Aggiungi detectedBPM alle dipendenze
 
 // Aggiungi questi nei useRef in alto se mancano
 const nextNoteTimeRef = useRef(0);
@@ -396,18 +459,26 @@ useEffect(() => {
   const ctx = audioContextRef.current;
   if (!ctx) return;
 
-  // Visual: Lampeggio più naturale
   const now = ctx.currentTime;
   const delay = (time - now) * 1000;
   
   if (delay < 200) {
     setTimeout(() => {
-      setIsClickVisual(true);
-      // Durata leggermente più lunga (60ms) per essere più "morbido" all'occhio
-      setTimeout(() => setIsClickVisual(false), 60);
+      const el = visualClickRef.current;
+      if (el) {
+        // Web Animations API: fluidità massima a 60/120fps senza re-render
+        el.animate([
+          { transform: 'scale(2)', opacity: 1, backgroundColor: '#5dda9d', boxShadow: '0 0 20px #5dda9d' },
+          { transform: 'scale(1)', opacity: 0, backgroundColor: '#5dda9d', boxShadow: '0 0 0px #5dda9d' }
+        ], { 
+          duration: 300, 
+          easing: 'cubic-bezier(0, 0, 0.2, 1)' 
+        });
+      }
     }, Math.max(0, delay));
   }
 
+  // ... (tutto il resto del codice audio rimane invariato)
   // Audio: Controllo Mute e Volume
   const currentVol = isClickMuted ? 0 : clickVolumeRef.current;
   if (currentVol === 0) return;
@@ -438,49 +509,34 @@ useEffect(() => {
   }
   const ctx = audioContextRef.current;
   if (ctx.state === 'suspended') await ctx.resume();
-  
-  // ... resto del calcolo con audioOffset ...
-  
-
-  // Se il BPM è 0 o NaN, fermati qui
-  if (!bpm || isNaN(bpm)) {
-    console.error("❌ BPM non valido:", bpm);
-    return;
-  }
 
   const secondsPerBeat = 60.0 / (bpm * playbackRate);
-  
-  // Calcolo della posizione nella griglia
+  const offsetCorrection = manualSyncOffset / 1000; // Converti ms in secondi
+
+  // Calcolo della posizione esatta nella griglia rispetto all'audioOffset (il primo beat rilevato)
   const timeRelativeToFirstBeat = audioCurrentTime - audioOffset;
   const timeInCurrentBeat = ((timeRelativeToFirstBeat % secondsPerBeat) + secondsPerBeat) % secondsPerBeat;
   let timeToNextBeat = secondsPerBeat - timeInCurrentBeat;
 
-  if (timeToNextBeat < 0.05) timeToNextBeat += secondsPerBeat;
+  // Programmiamo il primo colpo
+  nextNoteTimeRef.current = ctx.currentTime + timeToNextBeat + offsetCorrection;
 
-  nextNoteTimeRef.current = ctx.currentTime + timeToNextBeat;
-  console.log("⏱️ Primo colpo programmato tra:", timeToNextBeat.toFixed(3), "secondi");
-// Dentro startMetronome
-// Convertiamo manualSyncOffset da millisecondi a secondi (es: 10ms -> 0.01s)
-const offsetCorrection = manualSyncOffset / 1000;
-
-nextNoteTimeRef.current = ctx.currentTime + timeToNextBeat + offsetCorrection;
-  const scheduler = () => {
-    // Se non entra in questo while, il pallino non lampeggerà mai
-    while (nextNoteTimeRef.current < ctx.currentTime + 0.2) {
-      playClickSound(nextNoteTimeRef.current);
-      nextNoteTimeRef.current += secondsPerBeat;
+  // Questa funzione viene chiamata dal Worker ogni 25ms
+  workerRef.current!.onmessage = (e) => {
+    if (e.data === "tick") {
+      // Look-ahead: programmiamo i suoni che devono avvenire nei prossimi 100ms
+      while (nextNoteTimeRef.current < ctx.currentTime + 0.1) {
+        playClickSound(nextNoteTimeRef.current);
+        nextNoteTimeRef.current += secondsPerBeat;
+      }
     }
-    timerIDRef.current = window.setTimeout(scheduler, 25.0) as any;
   };
 
-  scheduler();
+  workerRef.current?.postMessage("start");
 };
 
 const stopMetronome = () => {
-  if (timerIDRef.current) {
-    clearTimeout(timerIDRef.current);
-    timerIDRef.current = null;
-  }
+  workerRef.current?.postMessage("stop");
 };
 
 // Questa funzione ora restituisce sia il BPM che l'Offset del primo battito
@@ -491,7 +547,12 @@ const analyzeAudioMetadata = async (audioBuffer: AudioBuffer) => {
     // 1. Rilevamento BPM
     const result = await BeatDetector.analyze(audioBuffer);
     let bpm = typeof result === 'number' ? result : result.tempo;
-    bpm = Math.round(bpm);
+    // Rimuovi l'arrotondamento per avere precisione professionale
+bpm = parseFloat(bpm.toFixed(2)); 
+
+// Correzione range (standard DJ)
+while (bpm < 75) bpm *= 2; 
+while (bpm > 165) bpm /= 2;
 
     // Logica DJ (correzione raddoppio/metà)
     if (bpm < 68) bpm *= 2; 
@@ -608,6 +669,7 @@ const analyzeAudioMetadata = async (audioBuffer: AudioBuffer) => {
     // Analisi BPM e Offset
 const { bpm, offset } = await analyzeAudioMetadata(audioBuffer);
 setDetectedBPM(bpm);
+setOriginalBPM(bpm); // <--- Salva qui il valore originale
 setAudioOffset(offset); // Assicurati di avere const [audioOffset, setAudioOffset] = useState(0); nei tuoi stati
     
     // Ottieni duration
@@ -689,6 +751,7 @@ const loadFile = async (fileData: AudioFileData) => {
       const { bpm, offset } = await analyzeAudioMetadata(audioBuffer);
       
       setDetectedBPM(bpm);
+setOriginalBPM(bpm); // <--- Salva qui il valore originale
       setAudioOffset(offset);
       
       // Aggiorniamo l'oggetto in locale così non lo richiede più
@@ -1894,53 +1957,60 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                       </div>
 {/* Indicatore Visivo Click */}
 <div className="flex items-center gap-2 mb-2">
-  <div className={`w-3 h-3 rounded-full transition-all duration-75 ease-out ${
-  isClickVisual ? 'bg-[#5dda9d] scale-125 shadow-[0_0_10px_#5dda9d]' : 'bg-white/10 scale-100'
-}`} />
-  <span className="text-[15px] text-neutral-500 font-bold uppercase tracking-tighter">
-    Visual Click
-  </span>
-</div>
-<div className="flex flex-col items-center gap-1 mt-4 p-2 bg-white/5 rounded-lg border border-white/10">
-  <span className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest">
-    Sync Calibration
-  </span>
-  <div className="flex items-center gap-3">
-    {/* Tasto MENO -10ms */}
-    <button 
-      onClick={() => setManualSyncOffset(prev => prev - 10)}
-      className="p-1 hover:bg-white/10 rounded transition-colors text-[#5dda9d]"
-      title="Anticipa click (-10ms)"
-    >
-      <Minus size={18} />
-    </button>
+  <div className="relative w-3 h-3 flex items-center justify-center">
+    {/* Pallino di base (sempre visibile, spento) */}
+    <div className="absolute inset-0 rounded-full bg-white/10" />
     
-    {/* Display Millisecondi */}
-    <div className="flex flex-col items-center min-w-[60px]">
-      <span className={`text-xs font-mono font-bold ${manualSyncOffset !== 0 ? 'text-[#5dda9d]' : 'text-neutral-400'}`}>
-        {manualSyncOffset > 0 ? `+${manualSyncOffset}` : manualSyncOffset}ms
-      </span>
-    </div>
+    {/* Pallino animato (gestito dal Ref) */}
+    <div 
+      ref={visualClickRef} 
+      className="absolute inset-0 rounded-full opacity-0 pointer-events-none" 
+      style={{ backgroundColor: '#5dda9d' }}
+    />
+  </div>
+  <span className="text-[15px] text-neutral-500 font-bold uppercase tracking-tighter">
+    
+  </span>
 
-    {/* Tasto PIÙ +10ms */}
-    <button 
-      onClick={() => setManualSyncOffset(prev => prev + 10)}
-      className="p-1 hover:bg-white/10 rounded transition-colors text-[#5dda9d]"
-      title="Ritarda click (+10ms)"
+
+<div className="flex flex-col gap-4 p-4 bg-white/5 rounded-xl border border-white/10">
+  {/* Offset Control */}
+  <div className="flex items-center justify-between">
+    <div className="flex flex-col">
+      <span className="text-[10px] uppercase text-neutral-500 font-bold">Offset</span>
+      <span className="text-lg font-mono text-[#5dda9d]">{manualSyncOffset > 0 ? '+' : ''}{manualSyncOffset}ms</span>
+    </div>
+    <div className="flex gap-1">
+      <button onClick={() => setManualSyncOffset(prev => prev - 5)} className="p-2 hover:bg-white/10 rounded-lg text-white"><Minus size={18}/></button>
+      <button onClick={() => setManualSyncOffset(0)} className="px-2 text-[10px] text-neutral-500 hover:text-white uppercase">Zero</button>
+      <button onClick={() => setManualSyncOffset(prev => prev + 5)} className="p-2 hover:bg-white/10 rounded-lg text-white"><Plus size={18}/></button>
+    </div>
+  </div>
+
+  {/* BPM & Tap Tempo */}
+  <div className="grid grid-cols-2 gap-2">
+    <button
+      onMouseDown={handleTap}
+      className="py-3 rounded-lg bg-[#5dda9d]/10 border border-[#5dda9d]/30 text-[#5dda9d] font-bold active:scale-95 transition-all uppercase text-xs"
     >
-      <Plus size={18} />
+      Tap Tempo
+    </button>
+    <button
+      onClick={resetToOriginalBPM}
+      className="py-3 rounded-lg bg-white/5 border border-white/10 text-neutral-400 font-bold hover:bg-white/10 active:scale-95 transition-all uppercase text-xs"
+    >
+      Reset BPM
     </button>
   </div>
 
-  {/* Tasto RESET sempre visibile */}
-  <button 
-    onClick={() => setManualSyncOffset(0)}
-    className={`mt-1 text-[9px] uppercase tracking-tighter transition-opacity ${
-      manualSyncOffset === 0 ? 'opacity-30 cursor-default' : 'opacity-100 hover:text-[#5dda9d]'
-    }`}
-  >
-    Reset
-  </button>
+  
+    
+   
+
+    
+  </div>
+
+ 
 
 </div>
                       <div className="rounded-lg border border-blue-500/40 bg-blue-500/20 px-4 py-2 text-center">
