@@ -329,6 +329,49 @@ const audioVolumeRef = useRef(audioVolume);
 const [isAudioMuted, setIsAudioMuted] = useState(false);
 const [isClickMuted, setIsClickMuted] = useState(false); // NON è in mute
 
+// menu a tendina brani in DB
+const [allDBFiles, setAllDBFiles] = useState<IndexedDBFile[]>([]);
+const [showDBFilesModal, setShowDBFilesModal] = useState(false);
+
+//icone per ridurre ogni finestra
+const [collapsedSections, setCollapsedSections] = useState({
+  player: false,
+  waveform: false,
+  controls: false,
+  playlist: false,
+  currentPhase: false,
+  overview: false,
+  bpmDetector: false
+});
+
+const toggleSection = (section: keyof typeof collapsedSections) => {
+  setCollapsedSections(prev => ({ ...prev, [section]: !prev[section] }));
+};
+
+const SectionHeader = ({ 
+  title, 
+  sectionKey, 
+  children 
+}: { 
+  title: string; 
+  sectionKey: keyof typeof collapsedSections;
+  children?: React.ReactNode;
+}) => (
+  <div className="flex items-center justify-between mb-4">
+    <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">{title}</span>
+    <div className="flex items-center gap-2">
+      {children}
+      <button
+        onClick={() => toggleSection(sectionKey)}
+        className="flex h-6 w-6 items-center justify-center rounded-lg border border-white/10 bg-white/5 transition hover:bg-white/10"
+        title={collapsedSections[sectionKey] ? "Espandi" : "Riduci"}
+      >
+        {collapsedSections[sectionKey] ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+      </button>
+    </div>
+  </div>
+);
+
 // Stati per il Tap Tempo
 const [originalBPM, setOriginalBPM] = useState<number | null>(null);
 const [tapTimes, setTapTimes] = useState<number[]>([]);
@@ -337,7 +380,10 @@ const [tapTimes, setTapTimes] = useState<number[]>([]);
 const handleTap = () => {
   const now = performance.now();
   setTapTimes(prev => {
-    const newTaps = [...prev, now].slice(-10);
+    const lastTap = prev[prev.length - 1];
+    const isNewSequence = lastTap && (now - lastTap > 2000);
+    const newTaps = isNewSequence ? [now] : [...prev, now].slice(-4); 
+
     if (newTaps.length >= 2) {
       const intervals = [];
       for (let i = 1; i < newTaps.length; i++) {
@@ -346,20 +392,24 @@ const handleTap = () => {
       const avgInterval = intervals.reduce((a, b) => a + b) / intervals.length;
       const newBpm = parseFloat((60000 / avgInterval).toFixed(2));
       
-      // Aggiorna il BPM senza fermare nulla
       setDetectedBPM(newBpm);
+
+      // NON fare nulla con il metronomo qui - lascia che continui
     }
     return newTaps;
   });
 };
 
 // Funzione Reset BPM
-const resetToOriginalBPM = () => {
+
+  const resetToOriginalBPM = () => {
   if (originalBPM) {
     setDetectedBPM(originalBPM);
-    setManualSyncOffset(0); // Opzionale: resetta anche l'offset
+    setManualSyncOffset(0);
+    // NON fare nulla con il metronomo qui - lascia che continui
   }
 };
+
 // Funzioni per l'Offset
 const adjustOffset = (amount: number) => {
   setManualSyncOffset(prev => prev + amount);
@@ -397,23 +447,8 @@ useEffect(() => {
   return () => workerRef.current?.terminate();
 }, []);
 
-// Aggiorna questo useEffect (intorno alla riga 300)
-useEffect(() => {
-  // Se il metronomo sta andando, ricalcoliamo la posizione dei beat al volo
-  if (isRunning && !isPaused && !isInBreak && audioRef.current && detectedBPM) {
-    const ctx = audioContextRef.current;
-    if (ctx) {
-      // Non chiamiamo stopMetronome() bruscamente, ma startMetronome 
-      // ricalcolerà i tempi basandosi sulla posizione attuale dell'audio
-      startMetronome(
-        detectedBPM, 
-        getCurrentPlaybackRate(), 
-        ctx.currentTime, 
-        audioRef.current.currentTime
-      );
-    }
-  }
-}, [manualSyncOffset, detectedBPM]); // Aggiungi detectedBPM alle dipendenze
+// Questo useEffect gestisce il ricalcolo del metronomo in tempo reale
+
 
 // Aggiungi questi nei useRef in alto se mancano
 const nextNoteTimeRef = useRef(0);
@@ -454,6 +489,32 @@ useEffect(() => {
     osc.start(now);
     osc.stop(now + 0.2);
   };
+
+// Aggiorna metronomo quando cambia BPM/offset durante preview
+useEffect(() => {
+  if (isPreviewPlaying && audioRef.current && detectedBPM && audioContextRef.current) {
+    startMetronome(
+      detectedBPM,
+      1.0,
+      audioContextRef.current.currentTime,
+      audioRef.current.currentTime
+    );
+  }
+}, [detectedBPM, manualSyncOffset, isPreviewPlaying]);
+
+// Gestione barra spaziatrice per Play/Pausa
+useEffect(() => {
+  const handleKeyPress = (e: KeyboardEvent) => {
+    if (e.code === 'Space' && audioFile) {
+      e.preventDefault();
+      handleStartStop();
+    }
+  };
+
+  window.addEventListener('keydown', handleKeyPress);
+  return () => window.removeEventListener('keydown', handleKeyPress);
+}, [audioFile, isRunning, isPaused, isInBreak]);
+
 
  const playClickSound = (time: number) => {
   const ctx = audioContextRef.current;
@@ -502,8 +563,12 @@ useEffect(() => {
   osc.stop(time + 0.12);
 };
 
+
+
   const startMetronome = async (bpm: number, playbackRate: number, startTime: number, audioCurrentTime: number) => {
-  stopMetronome();
+  // Ferma SOLO il worker, NON l'audio
+  workerRef.current?.postMessage("stop");
+  
   if (!audioContextRef.current) {
     audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
   }
@@ -511,23 +576,22 @@ useEffect(() => {
   if (ctx.state === 'suspended') await ctx.resume();
 
   const secondsPerBeat = 60.0 / (bpm * playbackRate);
-  const offsetCorrection = manualSyncOffset / 1000; // Converti ms in secondi
+  const offsetCorrection = manualSyncOffset / 1000;
 
-  // Calcolo della posizione esatta nella griglia rispetto all'audioOffset (il primo beat rilevato)
   const timeRelativeToFirstBeat = audioCurrentTime - audioOffset;
   const timeInCurrentBeat = ((timeRelativeToFirstBeat % secondsPerBeat) + secondsPerBeat) % secondsPerBeat;
   let timeToNextBeat = secondsPerBeat - timeInCurrentBeat;
 
-  // Programmiamo il primo colpo
   nextNoteTimeRef.current = ctx.currentTime + timeToNextBeat + offsetCorrection;
 
-  // Questa funzione viene chiamata dal Worker ogni 25ms
   workerRef.current!.onmessage = (e) => {
     if (e.data === "tick") {
-      // Look-ahead: programmiamo i suoni che devono avvenire nei prossimi 100ms
+      // Usa i parametri passati, non ricalcolare
+      const currentSecondsPerBeat = 60.0 / (bpm * playbackRate);
+      
       while (nextNoteTimeRef.current < ctx.currentTime + 0.1) {
         playClickSound(nextNoteTimeRef.current);
-        nextNoteTimeRef.current += secondsPerBeat;
+        nextNoteTimeRef.current += currentSecondsPerBeat;
       }
     }
   };
@@ -835,6 +899,35 @@ const exportSession = () => {
   URL.revokeObjectURL(url);
 };
 
+const loadAllDBFiles = async () => {
+  const files = await getAllFilesFromIndexedDB();
+  setAllDBFiles(files);
+  setShowDBFilesModal(true);
+};
+
+const addFileFromDB = async (dbFile: IndexedDBFile) => {
+  // Verifica se è già nella playlist
+  if (audioFiles.some(f => f.id === dbFile.id)) {
+    alert('Questo file è già nella playlist corrente');
+    return;
+  }
+  
+  const newFile: AudioFileData = {
+    id: dbFile.id,
+    url: URL.createObjectURL(dbFile.blob),
+    name: dbFile.name,
+    duration: dbFile.duration,
+    loopStart: dbFile.loopStart,
+    loopEnd: dbFile.loopEnd,
+    waveform: dbFile.waveform,
+    bpm: null,
+    timestamp: dbFile.timestamp
+  };
+  
+  setAudioFiles(prev => [...prev, newFile]);
+  alert(`✅ "${dbFile.name}" aggiunto alla playlist`);
+};
+
 // SOSTITUISCI la funzione importSession (riga ~470-541) con questa:
 const importSession = async (event: React.ChangeEvent<HTMLInputElement>) => {
   const file = event.target.files?.[0];
@@ -1107,40 +1200,21 @@ useEffect(() => {
   const audio = audioRef.current;
   if (!audio || !audioFile) return;
 
-  // Se l'app è in stato RUNNING (fasi attive)
   if (isRunning && !isPaused && !isInBreak) {
     audio.playbackRate = getCurrentPlaybackRate();
-    audio.volume = isAudioMuted ? 0 : audioVolume;
-
-    audio.play().then(() => {
-      console.log("🎵 Riproduzione avviata, sincronizzo metronomo...");
-      if (detectedBPM) {
-        // Inizializziamo il contesto audio se serve
-        if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        }
-        const ctx = audioContextRef.current;
-        if (ctx.state === 'suspended') ctx.resume();
-
-        // CHIAMATA CORRETTA A 4 PARAMETRI
-        startMetronome(
-          detectedBPM, 
-          getCurrentPlaybackRate(), 
-          ctx.currentTime, 
-          audio.currentTime
-        );
-      }
-    }).catch(err => console.error("Errore Play:", err));
-    
+audio.preservesPitch = true;
+    audio.play().catch(console.error);
+    // ... logica metronomo allenamento ...
   } else {
-    // Se siamo in pausa o stop
-    audio.pause();
-    stopMetronome();
+    // MODIFICA QUI: Aggiungiamo il controllo !isPreviewPlaying
+    // Se siamo in preview, NON deve mettere in pausa l'audio
+    if (!isPreviewPlaying) {
+      audio.pause();
+      stopMetronome();
+    }
   }
-  
-  // Queste dipendenze fanno sì che se cambi volume o velocità durante l'esercizio,
-  // l'audio si aggiorni senza fermarsi (grazie ai Ref che abbiamo usato prima)
-}, [isRunning, isPaused, isInBreak, currentPhase, audioFile, detectedBPM]);
+  // IMPORTANTE: aggiungi isPreviewPlaying alle dipendenze qui sotto
+}, [isRunning, isPaused, isInBreak, currentPhase, audioFile, detectedBPM, isPreviewPlaying]);
 
 // Gestore volumi audio "chirurgico"
 useEffect(() => {
@@ -1290,29 +1364,29 @@ const effectiveEnd = loopEnd;
     const audio = audioRef.current;
     if (!audio || !audioFile) return;
 
-    if (isRunning && !isPaused && !isInBreak) {
-      audio.playbackRate = getCurrentPlaybackRate();
-audio.volume = isAudioMuted ? 0 : audioVolume;
-      audio.volume = audioVolume; // Forza il volume attuale all'avvio
-
-
-      audio.play().then(() => {
-  if (detectedBPM) {
-    const ctx = audioContextRef.current;
-    // Usiamo ctx.currentTime come tempo di riferimento del sistema audio
-    // e audio.currentTime come posizione attuale della canzone
-    startMetronome(
-      detectedBPM, 
-      getCurrentPlaybackRate(), 
-      ctx?.currentTime || 0, 
-      audio.currentTime
-    );
-  }
-}).catch(err => console.error('Audio play error:', err));
-    } else {
-      audio.pause();
-      stopMetronome();
+   if (isRunning && !isPaused && !isInBreak) {
+  audio.playbackRate = getCurrentPlaybackRate();
+  audio.volume = isAudioMuted ? 0 : audioVolume;
+audio.volume = audioVolume; // Forza il volume attuale all'avvio
+  audio.play().then(() => {
+    if (detectedBPM) {
+      const ctx = audioContextRef.current;
+      startMetronome(
+        detectedBPM, 
+        getCurrentPlaybackRate(), 
+        ctx?.currentTime || 0, 
+        audio.currentTime,
+        false  // stoppa normalmente
+      );
     }
+  }).catch(err => console.error('Audio play error:', err));
+} else {
+  // NON fermare durante preview
+  if (!isPreviewPlaying) {
+    audio.pause();
+    stopMetronome();
+  }
+}
     
     // AGGIUNGI audioVolume qui sotto nelle dipendenze
   }, [isRunning, isPaused, isInBreak, currentPhase, phasePercentages, audioFile, detectedBPM]);
@@ -1417,33 +1491,31 @@ const [previewTime, setPreviewTime] = useState(0);
     
     countdownTimeoutsRef.current = [t1, t2, t3, t4, t5, t6, finalTimeout];
   };
- const handlePreviewLoop = () => {
-  const audio = audioRef.current;
-  if (!audio || isRunning) return;
+ const handlePreview = async () => {
+  if (!audioRef.current || !audioFile) return;
 
   if (isPreviewPlaying) {
-    audio.pause();
+    audioRef.current.pause();
     stopMetronome();
     setIsPreviewPlaying(false);
   } else {
-    // 1. Setup iniziale
-    audio.currentTime = loopStart;
-    audio.playbackRate = 1;
-    audio.volume = isAudioMuted ? 0 : audioVolume;
-
-    // 2. Esegui il play
-    audio.play().then(() => {
-      if (detectedBPM) {
-        const ctx = audioContextRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
-        audioContextRef.current = ctx;
-        // Chiamata metronomo con i 4 parametri corretti
-        startMetronome(detectedBPM, 1, ctx.currentTime, audio.currentTime);
-      }
+    audioRef.current.currentTime = loopStart;
+    try {
+      await audioRef.current.play();
       setIsPreviewPlaying(true);
-    }).catch(err => {
-      // Ignora l'errore di interruzione (è quello che causa il freeze se non gestito)
-      console.warn("Preview playback interrotto:", err);
-    });
+      
+      // Avvia il metronomo manualmente solo qui
+      if (detectedBPM && audioContextRef.current) {
+        startMetronome(
+          detectedBPM, 
+          1.0, 
+          audioContextRef.current.currentTime, 
+          audioRef.current.currentTime
+        );
+      }
+    } catch (err) {
+      console.error("Errore preview:", err);
+    }
   }
 };
   useEffect(() => {
@@ -1575,34 +1647,44 @@ const [previewTime, setPreviewTime] = useState(0);
     }
   };
 
-  const handleLoopMarkerDrag = (type: 'start' | 'end', e: React.MouseEvent) => {
-    if (isRunning && !isPaused) return;
+  const handleLoopMarkerDrag = (type: 'start' | 'end', e: React.MouseEvent | React.TouchEvent) => {
+  if (isRunning && !isPaused) return;
+  
+  const container = waveformContainerRef.current;
+  if (!container) return;
+  
+  const rect = container.getBoundingClientRect();
+  
+  const getPosition = (event: MouseEvent | TouchEvent) => {
+    const clientX = 'touches' in event ? event.touches[0].clientX : event.clientX;
+    const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+    const percentage = x / rect.width;
+    const newTime = percentage * audioDuration;
     
-    const container = waveformContainerRef.current;
-    if (!container) return;
-    
-    const rect = container.getBoundingClientRect();
-    
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const x = Math.max(0, Math.min(moveEvent.clientX - rect.left, rect.width));
-      const percentage = x / rect.width;
-      const newTime = percentage * audioDuration;
-      
-      if (type === 'start') {
-        setLoopStart(Math.min(newTime, loopEnd - 1));
-      } else {
-        setLoopEnd(Math.max(newTime, loopStart + 1));
-      }
-    };
-    
-    const onMouseUp = () => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    };
-    
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    if (type === 'start') {
+      setLoopStart(Math.min(newTime, loopEnd - 1));
+    } else {
+      setLoopEnd(Math.max(newTime, loopStart + 1));
+    }
   };
+  
+  const onMove = (moveEvent: MouseEvent | TouchEvent) => {
+    moveEvent.preventDefault();
+    getPosition(moveEvent);
+  };
+  
+  const onEnd = () => {
+    document.removeEventListener('mousemove', onMove as any);
+    document.removeEventListener('mouseup', onEnd);
+    document.removeEventListener('touchmove', onMove as any);
+    document.removeEventListener('touchend', onEnd);
+  };
+  
+  document.addEventListener('mousemove', onMove as any);
+  document.addEventListener('mouseup', onEnd);
+  document.addEventListener('touchmove', onMove as any, { passive: false });
+  document.addEventListener('touchend', onEnd);
+};
 
   const clearAudioFile = () => {
   handleReset();
@@ -1802,28 +1884,55 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
           
         ) : (
           <div className="mt-14 space-y-8">
-          <motion.div 
-              variants={fadeUp}
-              initial="hidden"
-              animate="visible"
-              className="grid grid-cols-2 gap-3 sm:grid-cols-4"
-            >
-              {phaseOrder.map(key => (
-                <div
-                  key={key}
-                  className={`flex items-center justify-center gap-1 rounded-full border px-4 py-2 text-sm transition ${
-                    currentPhase === key
-                      ? `bg-gradient-to-r ${phaseStyles[key].color} font-semibold text-white shadow-[0_8px_24px_rgba(0,0,0,0.25)]`
-                      : 'border-white/5 bg-white/5 text-neutral-300'
-                  }`}
-                >
-                  <span className="font-bold" style={{ color: currentPhase === key ? 'white' : phaseStyles[key].accent }}>
-                    {key}
-                  </span>
-                  <span>{phaseStyles[key].name.substring(1)}</span>
-                </div>
-              ))}
-            </motion.div>
+         <motion.div 
+  variants={fadeUp}
+  initial="hidden"
+  animate="visible"
+  className="grid grid-cols-2 gap-3 sm:grid-cols-4"
+>
+  {phaseOrder.map(key => (
+    <button
+      key={key}
+      onClick={() => {
+        if (!audioFile || isInBreak) return;
+        
+        if (isRunning) {
+          // Se sta già suonando, passa a quella fase
+          setCurrentPhase(key);
+          setCurrentRepetition(0);
+          setIsInBreak(true);
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = loopStart;
+          }
+          setTimeout(() => startBreak(key), 50);
+        } else {
+          // Se non sta suonando, avvia da quella fase
+          setCurrentPhase(key);
+          setCurrentRepetition(0);
+          setIsInBreak(true);
+          setIsRunning(true);
+          setIsPaused(false);
+          if (audioRef.current) {
+            audioRef.current.currentTime = loopStart;
+          }
+          setTimeout(() => startBreak(key), 50);
+        }
+      }}
+      disabled={!audioFile || isInBreak}
+      className={`flex items-center justify-center gap-1 rounded-full border px-4 py-2 text-sm transition cursor-pointer hover:scale-105 disabled:cursor-not-allowed disabled:opacity-50 ${
+        currentPhase === key
+          ? `bg-gradient-to-r ${phaseStyles[key].color} font-semibold text-white shadow-[0_8px_24px_rgba(0,0,0,0.25)]`
+          : 'border-white/5 bg-white/5 text-neutral-300 hover:border-white/20'
+      }`}
+    >
+      <span className="font-bold" style={{ color: currentPhase === key ? 'white' : phaseStyles[key].accent }}>
+        {key}
+      </span>
+      <span>{phaseStyles[key].name.substring(1)}</span>
+    </button>
+  ))}
+</motion.div>
 
             <div className="grid gap-4 grid-cols-1 lg:grid-cols-[1fr_minmax(300px,400px)]">
               <div className="space-y-8">
@@ -1942,14 +2051,14 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
 
 {/* BPM Display */}
 
-                  <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
-                    <div className="flex items-center justify-between gap-4">
+                 <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
+  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                       <div>
                         <div className="text-xs uppercase tracking-[0.3em] text-blue-300 mb-1">
                           Tempo Rilevato
                         </div>
                         <div className="text-xs text-neutral-400">
-                          Funzione Sperimentale:
+                          ATTENZIONE! Funzione Sperimentale:
                         </div>
 <div className="text-xs text-neutral-400">
                           potrebbe non funzionare correttamente
@@ -1973,16 +2082,16 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
   </span>
 
 
-<div className="flex flex-col gap-4 p-4 bg-white/5 rounded-xl border border-white/10">
+<div className="flex flex-col gap-0 p-2 bg-white/5 rounded-xl border border-white/10">
   {/* Offset Control */}
-  <div className="flex items-center justify-between">
+  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1">
     <div className="flex flex-col">
       <span className="text-[10px] uppercase text-neutral-500 font-bold">Offset</span>
       <span className="text-lg font-mono text-[#5dda9d]">{manualSyncOffset > 0 ? '+' : ''}{manualSyncOffset}ms</span>
     </div>
-    <div className="flex gap-1">
+    <div className="flex gap-1 flex-wrap">
       <button onClick={() => setManualSyncOffset(prev => prev - 5)} className="p-2 hover:bg-white/10 rounded-lg text-white"><Minus size={18}/></button>
-      <button onClick={() => setManualSyncOffset(0)} className="px-2 text-[10px] text-neutral-500 hover:text-white uppercase">Zero</button>
+      <button onClick={() => setManualSyncOffset(0)} className="px-2 text-[10px] text-neutral-500 hover:text-white uppercase">Reset</button>
       <button onClick={() => setManualSyncOffset(prev => prev + 5)} className="p-2 hover:bg-white/10 rounded-lg text-white"><Plus size={18}/></button>
     </div>
   </div>
@@ -2031,7 +2140,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                   <div className="flex items-center justify-between">
   <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Waveform & Loop</span>
   <button
-    onClick={handlePreviewLoop}
+    onClick={handlePreview}
     disabled={isRunning}
     className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
       isPreviewPlaying
@@ -2229,21 +2338,23 @@ const getPreviewGradientColor = () => {
                       
                       {/* Marker START */}
                       <div
-                        className="absolute top-1/2 h-6 w-8 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-emerald-400 bg-emerald-500 shadow-lg cursor-grab active:cursor-grabbing flex items-center justify-center"
-                        style={{ left: `${(loopStart / audioDuration) * 100}%` }}
-                        onMouseDown={(e) => handleLoopMarkerDrag('start', e)}
-                      >
-                        <Scissors size={14} className="text-white" />
-                      </div>
+  className="absolute top-1/2 h-6 w-8 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-emerald-400 bg-emerald-500 shadow-lg cursor-grab active:cursor-grabbing flex items-center justify-center"
+  style={{ left: `${(loopStart / audioDuration) * 100}%` }}
+  onMouseDown={(e) => handleLoopMarkerDrag('start', e)}
+  onTouchStart={(e) => handleLoopMarkerDrag('start', e)}
+>
+  <Scissors size={14} className="text-white" />
+</div>
                       
                       {/* Marker END */}
                       <div
-                        className="absolute top-1/2 h-6 w-8 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-red-400 bg-red-500 shadow-lg cursor-grab active:cursor-grabbing flex items-center justify-center"
-                        style={{ left: `${(loopEnd / audioDuration) * 100}%` }}
-                        onMouseDown={(e) => handleLoopMarkerDrag('end', e)}
-                      >
-                        <Scissors size={14} className="text-white" />
-                      </div>
+  className="absolute top-1/2 h-6 w-8 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-red-400 bg-red-500 shadow-lg cursor-grab active:cursor-grabbing flex items-center justify-center"
+  style={{ left: `${(loopEnd / audioDuration) * 100}%` }}
+  onMouseDown={(e) => handleLoopMarkerDrag('end', e)}
+  onTouchStart={(e) => handleLoopMarkerDrag('end', e)}
+>
+  <Scissors size={14} className="text-white" />
+</div>
                     </div>
                     
                     <div className="flex justify-between text-xs text-neutral-400">
@@ -2383,6 +2494,8 @@ const getPreviewGradientColor = () => {
       </label>
     </div>
   </div>
+
+
   
   <div className="space-y-2 max-h-60 overflow-y-auto pr-2" style={{scrollbarWidth: 'thin'}}>
     {audioFiles.map(file => (
@@ -2427,13 +2540,77 @@ const getPreviewGradientColor = () => {
         </div>
       </div>
     ))}
-    
+    <button
+  onClick={loadAllDBFiles}
+  className="flex items-center gap-1.5 rounded-lg border border-orange-500/30 bg-orange-500/10 px-2.5 py-1.5 text-xs font-semibold text-orange-300 transition hover:bg-orange-500/20"
+  title="Libreria completa"
+>
+  <Music size={12} />
+  Libreria
+</button>
     {audioFiles.length === 0 && (
       <div className="text-center py-8 text-neutral-500 text-sm">
         Nessun file caricato
       </div>
     )}
   </div>
+{/* MODAL LIBRERIA DATABASE */}
+{showDBFilesModal && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+    <div className="w-full max-w-lg max-h-[70vh] rounded-2xl border border-white/20 bg-[#0b0d0e]/95 shadow-2xl">
+      {/* Header con X */}
+      <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
+        <h3 className="text-lg font-semibold">Libreria ({allDBFiles.length})</h3>
+        <button
+          onClick={() => setShowDBFilesModal(false)}
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 transition hover:bg-white/10"
+        >
+          <X size={16} />
+        </button>
+      </div>
+      
+      {/* Lista file scrollabile */}
+      <div className="space-y-2 overflow-y-auto p-4" style={{ maxHeight: 'calc(70vh - 80px)' }}>
+        {allDBFiles.map(file => {
+          const isInPlaylist = audioFiles.some(f => f.id === file.id);
+          
+          return (
+            <div
+              key={file.id}
+              className={`flex items-center gap-3 rounded-lg border p-3 transition ${
+                isInPlaylist ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-white/10 bg-white/5 hover:border-white/20'
+              }`}
+            >
+              <Music size={14} className={isInPlaylist ? 'text-emerald-400' : 'text-neutral-500'} />
+              <div className="flex-1 min-w-0">
+                <div className="truncate text-sm font-semibold">{file.name}</div>
+                <div className="text-xs text-neutral-500 tabular-nums">{formatTime(file.duration)}</div>
+              </div>
+              
+              {isInPlaylist ? (
+                <span className="text-xs text-emerald-400 font-semibold whitespace-nowrap">✓ Caricato</span>
+              ) : (
+                <button
+                  onClick={() => addFileFromDB(file)}
+                  className="flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20 whitespace-nowrap"
+                >
+                  <Plus size={12} />
+                  Aggiungi
+                </button>
+              )}
+            </div>
+          );
+        })}
+        
+        {allDBFiles.length === 0 && (
+          <div className="py-12 text-center text-sm text-neutral-500">
+            Nessun file nel database
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
 </motion.div>
 
                 <motion.div
