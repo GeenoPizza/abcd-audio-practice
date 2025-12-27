@@ -1385,6 +1385,7 @@ audio.volume = audioVolume; // Forza il volume attuale all'avvio
   if (!isPreviewPlaying) {
     audio.pause();
     stopMetronome();
+    workerRef.current?.postMessage("stop"); // <-- AGGIUNGI QUESTA RIGA
   }
 }
     
@@ -1431,6 +1432,8 @@ useEffect(() => {
 useEffect(() => {
   if (isPreviewPlaying) {
     audioRef.current?.pause();
+    stopMetronome();
+    workerRef.current?.postMessage("stop"); // <-- AGGIUNGI QUESTA RIGA
     setIsPreviewPlaying(false);
   }
 }, [currentFileId]);
@@ -1497,7 +1500,9 @@ const [previewTime, setPreviewTime] = useState(0);
   if (isPreviewPlaying) {
     audioRef.current.pause();
     stopMetronome();
+    workerRef.current?.postMessage("stop"); // <-- AGGIUNGI QUESTA RIGA
     setIsPreviewPlaying(false);
+
   } else {
     audioRef.current.currentTime = loopStart;
     try {
@@ -1565,6 +1570,7 @@ const [previewTime, setPreviewTime] = useState(0);
     if (intervalIdRef.current) clearInterval(intervalIdRef.current);
     if (globalIntervalRef.current) clearInterval(globalIntervalRef.current);
     stopMetronome();
+    workerRef.current?.postMessage("stop"); // <-- AGGIUNGI QUESTA RIGA
     
     setIsRunning(false);
     setIsPaused(false);
