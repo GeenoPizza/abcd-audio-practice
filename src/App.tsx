@@ -1213,13 +1213,12 @@ audio.preservesPitch = true;
     audio.play().catch(console.error);
     // ... logica metronomo allenamento ...
   } else {
-    // MODIFICA QUI: Aggiungiamo il controllo !isPreviewPlaying
-    // Se siamo in preview, NON deve mettere in pausa l'audio
-    if (!isPreviewPlaying) {
-      audio.pause();
-      stopMetronome();
-    }
+  // Ferma audio E metronomo quando non in running
+  if (!isPreviewPlaying) {
+    audio.pause();
+    stopMetronome(); // Questo ora setta isMetronomeActiveRef.current = false
   }
+}
   // IMPORTANTE: aggiungi isPreviewPlaying alle dipendenze qui sotto
 }, [isRunning, isPaused, isInBreak, currentPhase, audioFile, detectedBPM, isPreviewPlaying]);
 
