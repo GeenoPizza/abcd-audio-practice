@@ -372,6 +372,8 @@ const SectionHeader = ({
   </div>
 );
 
+const isMetronomeActiveRef = useRef(false);
+
 // Stati per il Tap Tempo
 const [originalBPM, setOriginalBPM] = useState<number | null>(null);
 const [tapTimes, setTapTimes] = useState<number[]>([]);
@@ -517,6 +519,9 @@ useEffect(() => {
 
 
  const playClickSound = (time: number) => {
+  // ⚠️ CONTROLLO CRITICO: Non suonare se il metronomo è disattivato
+  if (!isMetronomeActiveRef.current) return;
+  
   const ctx = audioContextRef.current;
   if (!ctx) return;
 
@@ -568,6 +573,7 @@ useEffect(() => {
   const startMetronome = async (bpm: number, playbackRate: number, startTime: number, audioCurrentTime: number) => {
   // Ferma SOLO il worker, NON l'audio
   workerRef.current?.postMessage("stop");
+  isMetronomeActiveRef.current = true; // <-- AGGIUNGI QUESTA RIGA
   
   if (!audioContextRef.current) {
     audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -600,6 +606,7 @@ useEffect(() => {
 };
 
 const stopMetronome = () => {
+  isMetronomeActiveRef.current = false; // <-- AGGIUNGI QUESTA RIGA
   workerRef.current?.postMessage("stop");
 };
 
@@ -1498,18 +1505,16 @@ const [previewTime, setPreviewTime] = useState(0);
   if (!audioRef.current || !audioFile) return;
 
   if (isPreviewPlaying) {
+    stopMetronome(); // <-- METTI PRIMA, così setta subito il flag a false
     audioRef.current.pause();
-    stopMetronome();
-    workerRef.current?.postMessage("stop"); // <-- AGGIUNGI QUESTA RIGA
     setIsPreviewPlaying(false);
+
 
   } else {
     audioRef.current.currentTime = loopStart;
     try {
       await audioRef.current.play();
       setIsPreviewPlaying(true);
-      
-      // Avvia il metronomo manualmente solo qui
       if (detectedBPM && audioContextRef.current) {
         startMetronome(
           detectedBPM, 
@@ -1523,6 +1528,7 @@ const [previewTime, setPreviewTime] = useState(0);
     }
   }
 };
+
   useEffect(() => {
   const handleBeforeInstallPrompt = (e: Event) => {
     e.preventDefault();
