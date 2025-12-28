@@ -384,19 +384,19 @@ const handleTap = () => {
   setTapTimes(prev => {
     const lastTap = prev[prev.length - 1];
     const isNewSequence = lastTap && (now - lastTap > 2000);
-    const newTaps = isNewSequence ? [now] : [...prev, now].slice(-4); 
+    const newTaps = isNewSequence ? [now] : [...prev, now].slice(-8);
 
-    if (newTaps.length >= 2) {
+    if (newTaps.length >= 4) {
+      // Prendi solo gli ultimi 4 intervalli per stabilità
+      const recentTaps = newTaps.slice(-5); // Ultimi 5 tap = 4 intervalli
       const intervals = [];
-      for (let i = 1; i < newTaps.length; i++) {
-        intervals.push(newTaps[i] - newTaps[i - 1]);
+      for (let i = 1; i < recentTaps.length; i++) {
+        intervals.push(recentTaps[i] - recentTaps[i - 1]);
       }
       const avgInterval = intervals.reduce((a, b) => a + b) / intervals.length;
-      const newBpm = parseFloat((60000 / avgInterval).toFixed(2));
+      const newBpm = Math.round(60000 / avgInterval); // Arrotonda all'intero
       
       setDetectedBPM(newBpm);
-
-      // NON fare nulla con il metronomo qui - lascia che continui
     }
     return newTaps;
   });
@@ -494,7 +494,11 @@ useEffect(() => {
 
 // Aggiorna metronomo quando cambia BPM/offset durante preview
 useEffect(() => {
-  if (isPreviewPlaying && audioRef.current && detectedBPM && audioContextRef.current) {
+  // Riavvia metronomo quando cambia BPM o offset
+  if (!audioRef.current || !audioContextRef.current || !detectedBPM) return;
+  
+  // Durante PREVIEW
+  if (isPreviewPlaying) {
     startMetronome(
       detectedBPM,
       1.0,
@@ -502,7 +506,17 @@ useEffect(() => {
       audioRef.current.currentTime
     );
   }
-}, [detectedBPM, manualSyncOffset, isPreviewPlaying]);
+  
+  // Durante ALLENAMENTO (running e non in pausa/break)
+  if (isRunning && !isPaused && !isInBreak) {
+    startMetronome(
+      detectedBPM,
+      getCurrentPlaybackRate(),
+      audioContextRef.current.currentTime,
+      audioRef.current.currentTime
+    );
+  }
+}, [detectedBPM, manualSyncOffset]); // IMPORTANTE: Rimuovi isPreviewPlaying dalle dipendenze per evitare loop
 
 // Gestione barra spaziatrice per Play/Pausa
 useEffect(() => {
@@ -1544,10 +1558,14 @@ const [previewTime, setPreviewTime] = useState(0);
 
   const handleStartStop = () => {
     if (!audioFile) return;
+    
+    // Forza stop preview se attiva
     if (isPreviewPlaying) {
-  audioRef.current?.pause();
-  setIsPreviewPlaying(false);
-}
+      stopMetronome();
+      audioRef.current?.pause();
+      setIsPreviewPlaying(false);
+    }
+    
     if (isInBreak && countdownTimeoutsRef.current.length > 0) return;
 
     if (isRunning) {
@@ -2063,7 +2081,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
 {/* BPM Display */}
 
                  <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
-  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+  <div className="flex flex-col items-center sm:items-start sm:flex-row justify-center sm:justify-between gap-4">
                       <div>
                         <div className="text-xs uppercase tracking-[0.3em] text-blue-300 mb-1">
                           Tempo Rilevato
@@ -2088,12 +2106,13 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
       style={{ backgroundColor: '#5dda9d' }}
     />
   </div>
+ 
   <span className="text-[15px] text-neutral-500 font-bold uppercase tracking-tighter">
     
   </span>
 
 
-<div className="flex flex-col gap-0 p-2 bg-white/5 rounded-xl border border-white/10">
+<div className="flex flex-col gap-0 p-2 bg-white/5 rounded-xl border border-white/10 w-full sm:w-auto">
   {/* Offset Control */}
   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1">
     <div className="flex flex-col">
@@ -2624,29 +2643,7 @@ const getPreviewGradientColor = () => {
 )}
 </motion.div>
 
-                <motion.div
-                  variants={scaleIn}
-                  initial="hidden"
-                  animate="visible"
-                  className="rounded-2xl sm:rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_18px_40px_rgba(6,8,10,0.35)] backdrop-blur"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs uppercase tracking-[0.35em] text-neutral-500">Fase Corrente</span>
-                      <div className="mt-2 text-3xl font-semibold tabular-nums text-neutral-100">
-                        {currentPhase}
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-2 text-center text-xs uppercase tracking-[0.35em]">
-                      <span style={{ color: phaseStyles[currentPhase].accent, fontWeight: 'bold' }}>
-                        Sez. {currentPhase}:
-                      </span>
-                      <div className="mt-0.5 text-sm font-normal tracking-normal text-neutral-400">
-                        {currentRepetition + 1}/{phaseRepetitions[currentPhase]} rip.
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
+                
 
                 <motion.div
                   variants={scaleIn}
@@ -2670,9 +2667,20 @@ const getPreviewGradientColor = () => {
                         </div>
                         <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-white/5">
                           <div
-                            className={`h-full rounded-full bg-gradient-to-r ${phaseStyles[key].color}`}
-                            style={{ width: `${Math.min(phasePercentages[key], 100) / 150 * 100}%` }}
-                          />
+  className="h-full rounded-full"
+  style={{ 
+    width: `${Math.min(phasePercentages[key], 150) / 150 * 100}%`,
+    background: phasePercentages[key] > 100
+      ? `linear-gradient(to right, 
+          ${phaseStyles[key].accent} 0%, 
+          ${phaseStyles[key].accent} ${(100 / phasePercentages[key]) * 100}%, 
+          #ff6b35 ${(100 / phasePercentages[key]) * 100}%, 
+          #ff0000 100%
+        )`
+      : `linear-gradient(to right, ${phaseStyles[key].accent}, ${phaseStyles[key].accent})`,
+    transition: 'width 0.3s ease, background 0.3s ease'
+  }}
+/>
                         </div>
                       </div>
                     ))}
