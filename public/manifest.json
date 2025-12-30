@@ -1,24 +1,21 @@
 {
   "name": "ABCD Audio Practice",
   "short_name": "ABCD Audio",
-  "description": "Metodo ABCD per musicisti - Practice tool con velocità variabile",
+  "description": "Metodo ABCD per musicisti",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b0d0e",
   "theme_color": "#5dda9d",
-  "orientation": "portrait-primary",
   "icons": [
     {
       "src": "/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "type": "image/png"
     },
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "type": "image/png"
     }
   ]
 }
