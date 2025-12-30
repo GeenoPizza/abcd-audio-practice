@@ -9,7 +9,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'icon-192.png', 'icon-512.png'],
       manifest: {
-        name: 'ABCD Audio Practice',
+        name: 'ABCD method:audio',
         short_name: 'ABCD Audio',
         description: 'Metodo ABCD per musicisti',
         theme_color: '#5dda9d',
