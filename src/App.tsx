@@ -550,31 +550,29 @@ useEffect(() => {
   const now = ctx.currentTime;
   const delay = time - now;
   
-  // Visual LED fluido
-  if (delay >= 0 && delay < 0.2) {
-    setTimeout(() => {
-      const el = visualClickRef.current;
-      if (el) {
-        // RESET immediato senza animazione
-        el.style.transform = 'scale(1)';
-        el.style.opacity = '1';
-        el.style.backgroundColor = '#5dda9d';
-        el.style.boxShadow = '0 0 20px #5dda9d, 0 0 40px #5dda9d';
-        
-        // Fade out rapido
-        requestAnimationFrame(() => {
-          el.style.transition = 'all 0.15s cubic-bezier(0.4, 0, 1, 1)';
-          el.style.opacity = '0';
-          el.style.boxShadow = '0 0 0px #5dda9d';
-        });
-        
-        // Cleanup
-        setTimeout(() => {
-          el.style.transition = '';
-        }, 150);
-      }
-    }, delay * 1000);
+  // 🔥 Visual LED - SYNC IMMEDIATO per mobile
+  const el = visualClickRef.current;
+  if (el && delay >= -0.05 && delay < 0.1) {
+    // Flash immediato senza setTimeout (evita throttling mobile)
+    el.style.transform = 'scale(1.2)';
+    el.style.opacity = '1';
+    el.style.backgroundColor = '#5dda9d';
+    el.style.boxShadow = '0 0 25px #5dda9d, 0 0 45px #5dda9d';
+    el.style.transition = 'none';
+    
+    // Forza repaint
+    void el.offsetWidth;
+    
+    // Fade out
+    requestAnimationFrame(() => {
+      el.style.transition = 'all 0.12s ease-out';
+      el.style.opacity = '0.1';
+      el.style.transform = 'scale(1)';
+      el.style.boxShadow = '0 0 5px #5dda9d';
+    });
   }
+
+
 
   // ... resto del codice audio rimane identico
   // ... (tutto il resto del codice audio rimane invariato)
