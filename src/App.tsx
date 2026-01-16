@@ -321,6 +321,9 @@ const [audioOffset, setAudioOffset] = useState(0);
   const clickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const nextClickTimeRef = useRef<number>(0);
   const metronomeLookaheadRef = useRef<number | null>(null);
+
+const [isLoadingFile, setIsLoadingFile] = useState(false);
+
   // Trova gli altri useRef e aggiungi questo sotto:
 const clickVolumeRef = useRef(0); // Inizializza a 0 coerentemente con lo stato
 
@@ -387,16 +390,22 @@ const handleTap = () => {
     const newTaps = isNewSequence ? [now] : [...prev, now].slice(-8);
 
     if (newTaps.length >= 4) {
-      // Prendi solo gli ultimi 4 intervalli per stabilità
-      const recentTaps = newTaps.slice(-5); // Ultimi 5 tap = 4 intervalli
+      const recentTaps = newTaps.slice(-5);
       const intervals = [];
       for (let i = 1; i < recentTaps.length; i++) {
         intervals.push(recentTaps[i] - recentTaps[i - 1]);
       }
       const avgInterval = intervals.reduce((a, b) => a + b) / intervals.length;
-      const newBpm = Math.round(60000 / avgInterval); // Arrotonda all'intero
+      let tappedBpm = Math.round(60000 / avgInterval);
       
-      setDetectedBPM(newBpm);
+      // 🎯 Se sta suonando, scala il BPM per ottenere il 100%
+      if (isRunning && !isPaused && !isInBreak) {
+        const currentRate = getCurrentPlaybackRate();
+        tappedBpm = Math.round(tappedBpm / currentRate);
+      }
+      
+      setDetectedBPM(tappedBpm);
+      setOriginalBPM(tappedBpm);
     }
     return newTaps;
   });
@@ -533,31 +542,41 @@ useEffect(() => {
 
 
  const playClickSound = (time: number) => {
-  // ⚠️ CONTROLLO CRITICO: Non suonare se il metronomo è disattivato
   if (!isMetronomeActiveRef.current) return;
   
   const ctx = audioContextRef.current;
   if (!ctx) return;
 
   const now = ctx.currentTime;
-  const delay = (time - now) * 1000;
+  const delay = time - now;
   
-  if (delay < 200) {
+  // Visual LED fluido
+  if (delay >= 0 && delay < 0.2) {
     setTimeout(() => {
       const el = visualClickRef.current;
       if (el) {
-        // Web Animations API: fluidità massima a 60/120fps senza re-render
-        el.animate([
-          { transform: 'scale(2)', opacity: 1, backgroundColor: '#5dda9d', boxShadow: '0 0 20px #5dda9d' },
-          { transform: 'scale(1)', opacity: 0, backgroundColor: '#5dda9d', boxShadow: '0 0 0px #5dda9d' }
-        ], { 
-          duration: 300, 
-          easing: 'cubic-bezier(0, 0, 0.2, 1)' 
+        // RESET immediato senza animazione
+        el.style.transform = 'scale(1)';
+        el.style.opacity = '1';
+        el.style.backgroundColor = '#5dda9d';
+        el.style.boxShadow = '0 0 20px #5dda9d, 0 0 40px #5dda9d';
+        
+        // Fade out rapido
+        requestAnimationFrame(() => {
+          el.style.transition = 'all 0.15s cubic-bezier(0.4, 0, 1, 1)';
+          el.style.opacity = '0';
+          el.style.boxShadow = '0 0 0px #5dda9d';
         });
+        
+        // Cleanup
+        setTimeout(() => {
+          el.style.transition = '';
+        }, 150);
       }
-    }, Math.max(0, delay));
+    }, delay * 1000);
   }
 
+  // ... resto del codice audio rimane identico
   // ... (tutto il resto del codice audio rimane invariato)
   // Audio: Controllo Mute e Volume
   const currentVol = isClickMuted ? 0 : clickVolumeRef.current;
@@ -719,6 +738,8 @@ while (bpm > 165) bpm /= 2;
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
   const file = event.target.files?.[0];
   if (!file || !file.type.startsWith('audio/')) return;
+
+setIsLoadingFile(true); // <-- AGGIUNGI QUESTA
   
   const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const url = URL.createObjectURL(file);
@@ -795,8 +816,10 @@ setAudioOffset(offset); // Assicurati di avere const [audioOffset, setAudioOffse
   } catch (error) {
     console.error('Error uploading file:', error);
     alert('Errore nel caricamento del file');
+setIsLoadingFile(false);
   } finally {
     setIsLoadingWaveform(false);
+setIsLoadingFile(false);
   }
   
   event.target.value = '';
@@ -1047,6 +1070,7 @@ const handleReloadFileForImport = async (pendingFile: any, event: React.ChangeEv
       event.target.value = '';
       return;
     }
+setIsLoadingFile(true); // <-- AGGIUNGI
   }
   
   try {
@@ -1137,6 +1161,7 @@ await updateStorageInfo();
     console.error('Error reloading file:', error);
     alert('Errore nel caricamento del file');
     setIsLoadingWaveform(false);
+setIsLoadingFile(false); // <-- AGGIUNGI QUESTO
   }
   
   event.target.value = '';
@@ -1385,7 +1410,16 @@ const effectiveEnd = loopEnd;
     if (!audio || !audioFile) return;
 
    if (isRunning && !isPaused && !isInBreak) {
+// 🛑 Assicura che la preview sia VERAMENTE ferma
+    if (isPreviewPlaying) {
+      setIsPreviewPlaying(false);
+      stopMetronome();
+      workerRef.current?.postMessage("stop");
+    }
+    
+    audio.playbackRate = getCurrentPlaybackRate();
   audio.playbackRate = getCurrentPlaybackRate();
+audio.preservesPitch = true;
   audio.volume = isAudioMuted ? 0 : audioVolume;
 audio.volume = audioVolume; // Forza il volume attuale all'avvio
   audio.play().then(() => {
@@ -1464,6 +1498,18 @@ const [previewTime, setPreviewTime] = useState(0);
   const startBreak = (phaseToStartAfterBreak: PhaseKey) => {
     countdownTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
     countdownTimeoutsRef.current = [];
+// Ferma preview se attiva
+    if (isPreviewPlaying) {
+      stopMetronome();
+      workerRef.current?.postMessage("stop");
+      audioRef.current?.pause();
+      setIsPreviewPlaying(false);
+// FERMA L'AUDIO durante il countdown
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = loopStart;
+    }
+    }
     setIsFocused(false);
     breakStartedRef.current = true;
     nextPhaseOnBreakEndRef.current = phaseToStartAfterBreak;
@@ -1559,10 +1605,15 @@ const [previewTime, setPreviewTime] = useState(0);
   const handleStartStop = () => {
     if (!audioFile) return;
     
-    // Forza stop preview se attiva
+    // 🛑 STOP TOTALE della preview
     if (isPreviewPlaying) {
       stopMetronome();
-      audioRef.current?.pause();
+      workerRef.current?.postMessage("stop");
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = loopStart;
+        audioRef.current.playbackRate = 1.0; // Reset rate
+      }
       setIsPreviewPlaying(false);
     }
     
@@ -1596,6 +1647,10 @@ const [previewTime, setPreviewTime] = useState(0);
     workerRef.current?.postMessage("stop"); // <-- AGGIUNGI QUESTA RIGA
     
     setIsRunning(false);
+// Reset playbackRate per preview
+    if (audioRef.current) {
+      audioRef.current.playbackRate = 1.0;
+    }
     setIsPaused(false);
     setIsFocused(false);
     setIsInBreak(false);
@@ -1887,16 +1942,26 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
               Scegli un brano o un esercizio da studiare.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 items-center justify-center">
-  <label className="inline-flex cursor-pointer items-center gap-3 rounded-full bg-gradient-to-r from-[#3e5c55] to-[#2e4741] px-8 py-4 text-lg font-semibold shadow-lg transition hover:shadow-xl">
-    <Upload size={20} />
-    Carica File Audio
-    <input
-      type="file"
-      accept="audio/*"
-      onChange={handleFileUpload}
-      className="hidden"
-    />
-  </label>
+  <label className={`inline-flex cursor-pointer items-center gap-3 rounded-full bg-gradient-to-r from-[#3e5c55] to-[#2e4741] px-8 py-4 text-lg font-semibold shadow-lg transition hover:shadow-xl ${isLoadingFile ? 'opacity-50 cursor-wait' : ''}`}>
+  {isLoadingFile ? (
+    <>
+      <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" />
+      Caricamento...
+    </>
+  ) : (
+    <>
+      <Upload size={20} />
+      Carica File Audio
+    </>
+  )}
+  <input
+    type="file"
+    accept="audio/*"
+    onChange={handleFileUpload}
+    className="hidden"
+    disabled={isLoadingFile}
+  />
+</label>
   
   <label className="inline-flex cursor-pointer items-center gap-3 rounded-full border-2 border-purple-500/40 bg-purple-500/10 px-8 py-4 text-lg font-semibold text-purple-300 shadow-lg transition hover:border-purple-400 hover:bg-purple-500/20">
     <Download size={20} />
@@ -2034,7 +2099,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                               {detectedBPM ? (
     <div className="flex flex-col items-center">
       <span className="text-white text-lg">
-        {Math.round(detectedBPM * getCurrentPlaybackRate())} BPM
+        {isPreviewPlaying ? detectedBPM : Math.round(detectedBPM * getCurrentPlaybackRate())} BPM
       </span>
       <span className="text-s text-neutral-500">
         (Originale: {detectedBPM} BPM)
@@ -2080,86 +2145,191 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
 
 {/* BPM Display */}
 
-                 <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
-  <div className="flex flex-col items-center sm:items-start sm:flex-row justify-center sm:justify-between gap-4">
-                      <div>
-                        <div className="text-xs uppercase tracking-[0.3em] text-blue-300 mb-1">
-                          Tempo Rilevato
-                        </div>
-                        <div className="text-xs text-neutral-400">
-                          ATTENZIONE! Funzione Sperimentale:
-                        </div>
-<div className="text-xs text-neutral-400">
-                          potrebbe non funzionare correttamente
-                        </div>
-                      </div>
-{/* Indicatore Visivo Click */}
-<div className="flex items-center gap-2 mb-2">
-  <div className="relative w-3 h-3 flex items-center justify-center">
-    {/* Pallino di base (sempre visibile, spento) */}
-    <div className="absolute inset-0 rounded-full bg-white/10" />
-    
-    {/* Pallino animato (gestito dal Ref) */}
-    <div 
-      ref={visualClickRef} 
-      className="absolute inset-0 rounded-full opacity-0 pointer-events-none" 
-      style={{ backgroundColor: '#5dda9d' }}
-    />
-  </div>
- 
-  <span className="text-[15px] text-neutral-500 font-bold uppercase tracking-tighter">
-    
-  </span>
-
-
-<div className="flex flex-col gap-0 p-2 bg-white/5 rounded-xl border border-white/10 w-full sm:w-auto">
-  {/* Offset Control */}
-  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1">
-    <div className="flex flex-col">
-      <span className="text-[10px] uppercase text-neutral-500 font-bold">Offset</span>
-      <span className="text-lg font-mono text-[#5dda9d]">{manualSyncOffset > 0 ? '+' : ''}{manualSyncOffset}ms</span>
+                 <motion.div
+  variants={scaleIn}
+  initial="hidden"
+  animate="visible"
+  className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 overflow-hidden"
+>
+  {/* Header */}
+  <div className="flex items-center justify-between p-4">
+    <div className="flex items-center gap-3">
+      <Activity size={16} className="text-blue-300" />
+      <div>
+        <span className="text-xs uppercase tracking-[0.35em] text-blue-300">Metronomo & Sync</span>
+        <div className="text-[10px] text-blue-400/60 mt-0.5">⚠️ Funzione sperimentale</div>
+      </div>
     </div>
-    <div className="flex gap-1 flex-wrap">
-      <button onClick={() => setManualSyncOffset(prev => prev - 5)} className="p-2 hover:bg-white/10 rounded-lg text-white"><Minus size={18}/></button>
-      <button onClick={() => setManualSyncOffset(0)} className="px-2 text-[10px] text-neutral-500 hover:text-white uppercase">Reset</button>
-      <button onClick={() => setManualSyncOffset(prev => prev + 5)} className="p-2 hover:bg-white/10 rounded-lg text-white"><Plus size={18}/></button>
+    
+    <div className="flex items-center gap-3">
+      {/* Display BPM */}
+      {detectedBPM && (
+        <div className="px-4 py-2 rounded-lg bg-blue-500/20 border border-blue-500/40">
+          <div className="text-lg font-bold text-blue-100 leading-none tabular-nums">
+            {isRunning && !isPaused && !isInBreak 
+              ? Math.round(detectedBPM * getCurrentPlaybackRate())
+              : detectedBPM}
+          </div>
+          <div className="text-[9px] text-blue-300/70 leading-none mt-1">
+            {isRunning && !isPaused && !isInBreak ? `Fase ${currentPhase}` : 'BPM'}
+          </div>
+        </div>
+      )}
+      
+      {/* Collapse Button */}
+      <button
+        onClick={() => toggleSection('bpmDetector')}
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 transition hover:bg-white/10"
+        title={collapsedSections.bpmDetector ? "Espandi" : "Riduci"}
+      >
+        {collapsedSections.bpmDetector ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+      </button>
     </div>
   </div>
 
-  {/* BPM & Tap Tempo */}
-  <div className="grid grid-cols-2 gap-2">
-    <button
-      onMouseDown={handleTap}
-      className="py-3 rounded-lg bg-[#5dda9d]/10 border border-[#5dda9d]/30 text-[#5dda9d] font-bold active:scale-95 transition-all uppercase text-xs"
-    >
-      Tap Tempo
-    </button>
-    <button
-      onClick={resetToOriginalBPM}
-      className="py-3 rounded-lg bg-white/5 border border-white/10 text-neutral-400 font-bold hover:bg-white/10 active:scale-95 transition-all uppercase text-xs"
-    >
-      Reset BPM
-    </button>
-  </div>
-
-  
-    
-   
-
-    
-  </div>
-
- 
-
+  {/* Content */}
+  <AnimatePresence initial={false}>
+    {!collapsedSections.bpmDetector && (
+      <motion.div
+        initial={{ opacity: 0, height: 0 }}
+        animate={{ opacity: 1, height: 'auto' }}
+        exit={{ opacity: 0, height: 0 }}
+        transition={{ duration: 0.3 }}
+        className="border-t border-blue-500/20 p-4 space-y-4"
+      >
+        {/* Sezione BPM Control */}
+ {/* Visual Indicator */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-neutral-400">Indicatore visivo:</span>
+              <div className="flex items-center gap-2">
+                <div className="relative w-5 h-5 flex items-center justify-center">
+  <div 
+    ref={visualClickRef} 
+    className="absolute inset-0 rounded-full pointer-events-none" 
+    style={{ 
+      backgroundColor: '#2a4741',
+      opacity: 0,
+      boxShadow: '0 0 0px #5dda9d'
+    }}
+  />
 </div>
-                      <div className="rounded-lg border border-blue-500/40 bg-blue-500/20 px-4 py-2 text-center">
-                        <div className="text-2xl font-bold text-blue-100">
-                          {detectedBPM || '---'}
-                        </div>
-                        <div className="text-[10px] text-blue-300">BPM</div>
-                      </div>
-                    </div>
-                  </div>
+                <span className="text-[10px] uppercase text-neutral-500">Click</span>
+              </div>
+            </div>
+        <div>
+          <div className="text-xs uppercase tracking-wider text-neutral-400 mb-2 flex items-center gap-2">
+            <Music size={12} />
+            Controllo Tempo
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onMouseDown={handleTap}
+              className="py-3 rounded-lg bg-[#5dda9d]/10 border border-[#5dda9d]/30 text-[#5dda9d] font-bold active:scale-95 transition-all text-sm hover:bg-[#5dda9d]/20"
+            >
+              👆 Tap Tempo
+            </button>
+            <button
+              onClick={resetToOriginalBPM}
+              disabled={!originalBPM}
+              className="py-3 rounded-lg bg-white/5 border border-white/10 text-neutral-300 font-semibold hover:bg-white/10 active:scale-95 transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              🔄 Reset BPM
+            </button>
+          </div>
+          {originalBPM && detectedBPM !== originalBPM && (
+            <div className="mt-2 text-center text-[10px] text-neutral-500">
+              BPM Originale: {originalBPM}
+            </div>
+          )}
+        </div>
+
+{/* Sezione Aggiusta BPM */}
+        <div>
+          <div className="text-xs uppercase tracking-wider text-neutral-400 mb-2 flex items-center gap-2">
+            <Activity size={12} />
+            Aggiusta BPM Manualmente
+          </div>
+          
+          <div className="rounded-lg bg-white/5 border border-white/10 p-3">
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setDetectedBPM(prev => prev ? Math.max(30, prev - 1) : null)} 
+                disabled={!detectedBPM}
+                className="flex-1 py-2 hover:bg-white/10 rounded-lg text-white transition border border-white/10 text-sm font-semibold disabled:opacity-40"
+              >
+                -1 BPM
+              </button>
+              <button 
+                onClick={() => setDetectedBPM(prev => prev ? Math.min(300, prev + 1) : null)} 
+                disabled={!detectedBPM}
+                className="flex-1 py-2 hover:bg-white/10 rounded-lg text-white transition border border-white/10 text-sm font-semibold disabled:opacity-40"
+              >
+                +1 BPM
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Sezione Sync Control */}
+        <div>
+          <div className="text-xs uppercase tracking-wider text-neutral-400 mb-2 flex items-center gap-2">
+            <Target size={12} />
+            Sincronizzazione Click
+          </div>
+          
+          <div className="rounded-lg bg-white/5 border border-white/10 p-3 space-y-3">
+           
+
+
+            {/* Offset Control */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-neutral-400">Offset manuale:</span>
+                <span className="text-base font-mono text-[#5dda9d] tabular-nums font-bold">
+                  {manualSyncOffset > 0 ? '+' : ''}{manualSyncOffset}ms
+                </span>
+              </div>
+              
+              <div className="flex gap-2">
+  <button 
+    onClick={() => setManualSyncOffset(prev => prev - 5)} 
+    className="flex-1 py-2 hover:bg-white/10 rounded-lg text-white transition border border-white/10 text-sm font-semibold"
+  >
+    -5ms
+  </button>
+  <button 
+    onClick={() => setManualSyncOffset(0)} 
+    className="flex-1 py-2 hover:bg-white/10 rounded-lg text-neutral-400 transition border border-white/10 text-xs uppercase"
+  >
+    Reset
+  </button>
+  <button 
+    onClick={() => setManualSyncOffset(prev => prev + 5)} 
+    className="flex-1 py-2 hover:bg-white/10 rounded-lg text-white transition border border-white/10 text-sm font-semibold"
+  >
+    +5ms
+  </button>
+</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Info durante allenamento */}
+        {isRunning && !isPaused && !isInBreak && (
+          <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-3 text-center">
+            <div className="text-xs text-emerald-300">
+              🎯 Fase <strong>{currentPhase}</strong> in riproduzione
+            </div>
+            <div className="text-[10px] text-emerald-400/60 mt-1">
+              {detectedBPM} BPM × {Math.round(getCurrentPlaybackRate() * 100)}% = {Math.round(detectedBPM * getCurrentPlaybackRate())} BPM
+            </div>
+          </div>
+        )}
+      </motion.div>
+    )}
+  </AnimatePresence>
+</motion.div>
+                  
 
                 <motion.div
                   variants={scaleIn}
@@ -2182,6 +2352,8 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
     {isPreviewPlaying ? 'Stop' : 'Preview'}
   </button>
 </div>
+
+
 
                   {/* Waveform Equalizer Style */}
                   <div 
@@ -2489,16 +2661,26 @@ const getPreviewGradientColor = () => {
     
     <div className="flex flex-wrap gap-2">
       {/* AGGIUNGI (primo) */}
-      <label className="flex items-center gap-1.5 cursor-pointer rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20">
-        <Plus size={12} />
-        Aggiungi
-        <input
-          type="file"
-          accept="audio/*"
-          onChange={handleFileUpload}
-          className="hidden"
-        />
-      </label>
+      <label className={`flex items-center gap-1.5 cursor-pointer rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20 ${isLoadingFile ? 'opacity-50 cursor-wait' : ''}`}>
+  {isLoadingFile ? (
+    <>
+      <div className="animate-spin h-3 w-3 border-2 border-emerald-300 border-t-transparent rounded-full" />
+      <span>Carico...</span>
+    </>
+  ) : (
+    <>
+      <Plus size={12} />
+      Aggiungi
+    </>
+  )}
+  <input
+    type="file"
+    accept="audio/*"
+    onChange={handleFileUpload}
+    className="hidden"
+    disabled={isLoadingFile}
+  />
+</label>
 
       {/* SALVA PLAYLIST (secondo) */}
       <button
@@ -3126,9 +3308,24 @@ const getPreviewGradientColor = () => {
         </footer>
         {/* FINE FOOTER */}
 
+{/* Loading Overlay */}
+        {isLoadingFile && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="rounded-2xl border border-white/20 bg-[#0b0d0e]/95 p-8 shadow-2xl">
+              <div className="flex flex-col items-center gap-4">
+                <div className="h-16 w-16 animate-spin rounded-full border-4 border-[#5dda9d] border-t-transparent" />
+                <div className="text-lg font-semibold text-white">Caricamento file audio...</div>
+                <div className="text-sm text-neutral-400">Analisi BPM e generazione waveform</div>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
+
+   
 }
 
 export default App;
