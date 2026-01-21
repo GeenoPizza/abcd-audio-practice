@@ -2106,32 +2106,34 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
     <span className="pl-2 font-light text-neutral-300">method:audio</span>
   </h1>
   
-  <div className="flex bg-white/5 p-1 rounded-full border border-white/10">
-  <button 
-    onClick={() => setIsEasyMode(true)}
-    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-      isEasyMode 
-        ? 'bg-emerald-500 text-white shadow-lg' 
-        : 'text-neutral-500 hover:text-neutral-300'
-    }`}
-  >
-    EASY MODE
-  </button>
-  <button 
-    onClick={() => {
-    setIsEasyMode(false);
-    // Reset fasi ai valori default quando si torna in Full Mode
-    setPhasePercentages({ A: 70, B: 85, C: 105, D: 100 });
-  }}
-    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-      !isEasyMode 
-        ? 'bg-blue-500 text-white shadow-lg' 
-        : 'text-neutral-500 hover:text-neutral-300'
-    }`}
-  >
-    FULL MODE
-  </button>
-</div>
+  {/* Mostra toggle SOLO se c'è un file caricato */}
+  {audioFile && (
+    <div className="flex bg-white/5 p-1 rounded-full border border-white/10">
+      <button 
+        onClick={() => setIsEasyMode(true)}
+        className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
+          isEasyMode 
+            ? 'bg-emerald-500 text-white shadow-lg' 
+            : 'text-neutral-500 hover:text-neutral-300'
+        }`}
+      >
+        EASY MODE
+      </button>
+      <button 
+        onClick={() => {
+          setIsEasyMode(false);
+          setPhasePercentages({ A: 70, B: 85, C: 105, D: 100 });
+        }}
+        className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
+          !isEasyMode 
+            ? 'bg-blue-500 text-white shadow-lg' 
+            : 'text-neutral-500 hover:text-neutral-300'
+        }`}
+      >
+        FULL MODE
+      </button>
+    </div>
+  )}
 </div>
           <p className="text-sm text-neutral-500">
             Prodotto da <a href="https://batterista.online">Batterista Online</a>
