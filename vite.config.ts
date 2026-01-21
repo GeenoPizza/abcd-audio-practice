@@ -29,5 +29,20 @@ export default defineConfig({
         ]
       }
     })
-  ]
+  ],
+  resolve: {
+    alias: {
+      'soundtouchjs': 'soundtouchjs',
+      'web-audio-beat-detector': 'web-audio-beat-detector'
+    }
+  },
+  build: {
+    rollupOptions: {
+      external: [] // Forza a NON externalizzare nulla
+    },
+    commonjsOptions: {
+      include: [/node_modules/],
+      transformMixedEsModules: true
+    }
+  }
 })
