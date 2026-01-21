@@ -2346,7 +2346,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
                     />
                   </div>
                   <div>
-                    <label className="text-xs uppercase tracking-wider text-neutral-400 mb-2 block">Volume Click (solo 100% velocità)</label>
+                    <label className="text-xs uppercase tracking-wider text-neutral-400 mb-2 block">Volume Click (⚠️ funzione sperimentale)</label>
                     <input 
                       type="range" 
                       min="0" 
