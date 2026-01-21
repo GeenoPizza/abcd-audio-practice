@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Play, Pause, SkipForward, RotateCcw, Upload, Scissors, RefreshCcw, Volume2, Target, Music, X, ChevronDown, VolumeX, ChevronUp, Plus, Minus, Info, Download, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+// @ts-ignore
 import * as BeatDetector from 'web-audio-beat-detector';
+// @ts-ignore  
 import { SoundTouch, SimpleFilter } from 'soundtouchjs';
 
 // IndexedDB Setup
