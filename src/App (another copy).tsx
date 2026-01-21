@@ -282,8 +282,6 @@ function App() {
   timestamp: number;
 };
 
-const [isEasyMode, setIsEasyMode] = useState(false);
-
 const [audioFiles, setAudioFiles] = useState<AudioFileData[]>([]);
 const [currentFileId, setCurrentFileId] = useState<string | null>(null);
 const [audioFile, setAudioFile] = useState<string | null>(null);
@@ -481,8 +479,6 @@ const nextNoteTimeRef = useRef(0);
 const timerIDRef = useRef<number | null>(null);
 
 
-
-
 // Aggiungi anche questo useEffect subito sotto per tenere sincronizzato il Ref
 useEffect(() => {
   clickVolumeRef.current = isClickMuted ? 0 : clickVolume;
@@ -527,7 +523,7 @@ useEffect(() => {
   if (isPreviewPlaying) {
     startMetronome(
       detectedBPM,
-      phasePercentages.D / 100,  // <-- USA LA VELOCITÀ EASY MODE
+      1.0,
       audioContextRef.current.currentTime,
       audioRef.current.currentTime
     );
@@ -542,26 +538,20 @@ useEffect(() => {
       audioRef.current.currentTime
     );
   }
-}, [detectedBPM, manualSyncOffset, phasePercentages]); // IMPORTANTE: Rimuovi isPreviewPlaying dalle dipendenze per evitare loop
+}, [detectedBPM, manualSyncOffset]); // IMPORTANTE: Rimuovi isPreviewPlaying dalle dipendenze per evitare loop
 
 // Gestione barra spaziatrice per Play/Pausa
 useEffect(() => {
   const handleKeyPress = (e: KeyboardEvent) => {
     if (e.code === 'Space' && audioFile) {
       e.preventDefault();
-      
-      // In Easy Mode usa solo la preview
-      if (isEasyMode) {
-        handlePreview();
-      } else {
-        handleStartStop();
-      }
+      handleStartStop();
     }
   };
 
   window.addEventListener('keydown', handleKeyPress);
   return () => window.removeEventListener('keydown', handleKeyPress);
-}, [audioFile, isRunning, isPaused, isInBreak, isEasyMode, isPreviewPlaying]);
+}, [audioFile, isRunning, isPaused, isInBreak]);
 
 
  const playClickSound = (time: number) => {
@@ -899,13 +889,6 @@ const applyPitchShift = async (semitones: number) => {
 // 1. Attiva il caricamento
   setIsProcessing(true); 
   console.log('🎵 Applicando pitch shift...');
-
-// 🎯 SALVA i valori di loop PRIMA del pitch shift
-const savedLoopStart = loopStart;
-const savedLoopEnd = loopEnd;
-const savedDuration = audioDuration;
-
-
   
   console.log('🎵 Applicando pitch shift:', semitones, 'semitoni');
   
@@ -986,28 +969,16 @@ const savedDuration = audioDuration;
 
     // 5. Generazione Blob e aggiornamento UI
     const wavBlob = bufferToWave(processedBuffer, finalFrames);
-const newUrl = URL.createObjectURL(wavBlob);
-
-const currentTime = audioRef.current?.currentTime || 0;
-
-// 🎯 CORREZIONE: Scala anche loopStart/loopEnd in base al pitch ratio
-
-
-
-setAudioFile(newUrl);
-
-// 🎯 RIPRISTINA i valori di loop salvati
-setLoopStart(savedLoopStart);
-setLoopEnd(savedLoopEnd);
-setAudioDuration(savedDuration);
-
-
+    const newUrl = URL.createObjectURL(wavBlob);
+    
+    const currentTime = audioRef.current?.currentTime || 0;
+    setAudioFile(newUrl);
 
     setTimeout(() => {
       if (audioRef.current) {
         audioRef.current.currentTime = currentTime;
         audioRef.current.play().then(() => {
-      setIsPreviewPlaying(true); // <--- AGGIUNGI QUESTA RIGA
+      setIsPlaying(true); // <--- AGGIUNGI QUESTA RIGA
     }).catch((e) => console.log("Autoplay impedito:", e));
       }
     }, 250);
@@ -1021,7 +992,23 @@ setAudioDuration(savedDuration);
   }
 };
 
+useEffect(() => {
+  const audio = audioRef.current;
+  if (!audio) return;
 
+  const handlePlay = () => setIsPlaying(true);
+  const handlePause = () => setIsPlaying(false);
+
+  audio.addEventListener('play', handlePlay);
+  audio.addEventListener('pause', handlePause);
+  audio.addEventListener('ended', handlePause);
+
+  return () => {
+    audio.removeEventListener('play', handlePlay);
+    audio.removeEventListener('pause', handlePause);
+    audio.removeEventListener('ended', handlePause);
+  };
+}, []);
 
 const loadFile = async (fileData: AudioFileData) => {
   handleReset();
@@ -1402,10 +1389,10 @@ useEffect(() => {
   if (!audio) return;
 
   const handleLoadedMetadata = () => {
-    // 🎯 NON aggiornare nulla durante pitch shift
-    if (isProcessing) return;
-    
     setAudioDuration(audio.duration);
+    
+    // 🛡️ PROTEZIONE: Imposta la durata solo se loopEnd è ancora a zero o indefinito.
+    // Se ha già un valore (quello che abbiamo messo in loadFile), NON toccarlo.
     setLoopEnd(prev => (prev === 0 || prev === undefined) ? audio.duration : prev);
   };
 
@@ -1473,9 +1460,6 @@ useEffect(() => {
 // SOSTITUISCI l'useEffect (righe ~756-785) con questo:
 useEffect(() => {
   if (!currentFileId || !audioFile) return;
-
-// 🎯 NON salvare durante pitch shift processing
-  if (isProcessing) return;
   
   const saveChanges = async () => {
     try {
@@ -1773,8 +1757,6 @@ const [previewTime, setPreviewTime] = useState(0);
 
   } else {
     audioRef.current.currentTime = loopStart;
-audioRef.current.playbackRate = phasePercentages.D / 100; // <-- AGGIUNGI QUESTA
-  audioRef.current.preservesPitch = true; // <-- AGGIUNGI QUESTA
     try {
       await audioRef.current.play();
       setIsPreviewPlaying(true);
@@ -2095,42 +2077,13 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
           animate="visible"
           className="flex flex-col gap-5 text-center"
         >
-          <div className="flex items-center justify-center gap-4">
-  <h1 className="text-3xl sm:text-4xl md:text-5xl font-light leading-tight text-neutral-100">
-    <span className="font-semibold text-[#88a7d0]">A</span>
-    <span className="font-semibold text-[#c2b68a]">B</span>
-    <span className="font-semibold text-[#d9a88a]">C</span>
-    <span className="font-semibold text-[#8ab7aa]">D</span>
-    <span className="pl-2 font-light text-neutral-300">method:audio</span>
-  </h1>
-  
-  <div className="flex bg-white/5 p-1 rounded-full border border-white/10">
-  <button 
-    onClick={() => setIsEasyMode(true)}
-    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-      isEasyMode 
-        ? 'bg-emerald-500 text-white shadow-lg' 
-        : 'text-neutral-500 hover:text-neutral-300'
-    }`}
-  >
-    EASY MODE
-  </button>
-  <button 
-    onClick={() => {
-    setIsEasyMode(false);
-    // Reset fasi ai valori default quando si torna in Full Mode
-    setPhasePercentages({ A: 70, B: 85, C: 105, D: 100 });
-  }}
-    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-      !isEasyMode 
-        ? 'bg-blue-500 text-white shadow-lg' 
-        : 'text-neutral-500 hover:text-neutral-300'
-    }`}
-  >
-    FULL MODE
-  </button>
-</div>
-</div>
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-light leading-tight text-neutral-100">
+            <span className="font-semibold text-[#88a7d0]">A</span>
+            <span className="font-semibold text-[#c2b68a]">B</span>
+            <span className="font-semibold text-[#d9a88a]">C</span>
+            <span className="font-semibold text-[#8ab7aa]">D</span>
+            <span className="pl-2 font-light text-neutral-300">method:audio</span>
+          </h1>
           <p className="text-sm text-neutral-500">
             Prodotto da <a href="https://batterista.online">Batterista Online</a>
           </p>
@@ -2153,238 +2106,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
           </motion.div>
         )}
 
-{/* EASY MODE INTERFACE */}
-        {isEasyMode && audioFile && (
-          <motion.div
-            variants={scaleIn}
-            initial="hidden"
-            animate="visible"
-            className="mt-14 space-y-6"
-          >
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-xl">
-              <h2 className="text-2xl font-semibold mb-6 text-center text-emerald-300">EASY MODE</h2>
-              
-              <div className="space-y-6">
-                {/* Nome File */}
-                <div className="text-center">
-                  <div className="text-sm text-neutral-400 mb-1">File corrente:</div>
-                  <div className="font-semibold text-lg text-white">{audioFileName}</div>
-                </div>
-
-                {/* Waveform */}
-                <div 
-                  ref={waveformContainerRef}
-                  className="relative h-40 cursor-pointer overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-black/60 to-black/30"
-                  onClick={handleWaveformClick}
-                >
-                  {waveformData.length > 0 && (
-                    <div className="relative flex h-full items-center justify-center gap-0 px-1">
-                      {waveformData.map((amplitude, index) => {
-                        const isInLoop = 
-                          (index / waveformData.length) * audioDuration >= loopStart &&
-                          (index / waveformData.length) * audioDuration <= loopEnd;
-                        const isPassed = (index / waveformData.length) * audioDuration <= currentTime;
-                        
-                        return (
-                          <div key={index} className="relative flex h-full items-center justify-center" style={{ flex: 1 }}>
-                            <div
-                              className="rounded-full transition-all duration-150"
-                              style={{
-                                width: '2px',
-                                height: `${Math.max(amplitude * 95, 10)}%`,
-                                background: isInLoop && isPassed
-                                  ? 'linear-gradient(to top, #5dda9d, rgba(93, 218, 157, 0.4))'
-                                  : isInLoop
-                                    ? 'linear-gradient(to top, rgba(93, 218, 157, 0.5), rgba(93, 218, 157, 0.3))'
-                                    : 'linear-gradient(to top, rgba(255,255,255,0.15), rgba(255,255,255,0.05))',
-                              }}
-                            />
-                          </div>
-                        );
-                      })}
-                      
-                      {/* Current time indicator */}
-                      <div
-                        className="absolute top-0 bottom-0 w-1 bg-white/80 shadow-[0_0_20px_rgba(255,255,255,0.6)] rounded-full"
-                        style={{ left: `${(currentTime / audioDuration) * 100}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-
-               {/* Loop Range con Slider - Copiato da Full Mode */}
-<div className="space-y-4">
-  <div className="text-xs uppercase tracking-[0.3em] text-neutral-400 mb-3">
-    Loop Range
-  </div>
-  
-  {/* Visualizzazione grafica del range */}
-  <div className="relative h-2 rounded-xl bg-white/5 mb-2">
-    <div
-      className="absolute h-full rounded-xl bg-gradient-to-r from-emerald-500/40 to-red-500/40"
-      style={{
-        left: `${(loopStart / audioDuration) * 100}%`,
-        width: `${((loopEnd - loopStart) / audioDuration) * 100}%`
-      }}
-    />
-    
-    {/* Marker START */}
-    <div
-      className="absolute top-1/2 h-6 w-8 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-emerald-400 bg-emerald-500 shadow-lg cursor-grab active:cursor-grabbing flex items-center justify-center"
-      style={{ left: `${(loopStart / audioDuration) * 100}%` }}
-      onMouseDown={(e) => handleLoopMarkerDrag('start', e)}
-      onTouchStart={(e) => handleLoopMarkerDrag('start', e)}
-    >
-      <Scissors size={14} className="text-white" />
-    </div>
-    
-    {/* Marker END */}
-    <div
-      className="absolute top-1/2 h-6 w-8 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-red-400 bg-red-500 shadow-lg cursor-grab active:cursor-grabbing flex items-center justify-center"
-      style={{ left: `${(loopEnd / audioDuration) * 100}%` }}
-      onMouseDown={(e) => handleLoopMarkerDrag('end', e)}
-      onTouchStart={(e) => handleLoopMarkerDrag('end', e)}
-    >
-      <Scissors size={14} className="text-white" />
-    </div>
-  </div>
-  
-  <div className="flex justify-between text-xs text-neutral-400">
-    <div className="flex flex-col">
-      <span className="font-semibold text-emerald-400">START</span>
-      <span className="tabular-nums">{formatTime(loopStart)}</span>
-    </div>
-    <div className="flex flex-col text-right">
-      <span className="font-semibold text-red-400">END</span>
-      <span className="tabular-nums">{formatTime(loopEnd)}</span>
-    </div>
-  </div>
-</div>
-
-                {/* Playback Speed Easy Mode */}
-<div className="space-y-3">
-  <div className="flex items-center justify-between mb-2">
-    <label className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-bold">Velocità di Studio</label>
-    <span className="text-xl font-black text-[#5dda9d] tabular-nums">
-      {Math.round(phasePercentages.D)}%
-    </span>
-  </div>
-  
-  <input 
-  type="range" 
-  min="50" 
-  max="150" 
-  value={phasePercentages.D} 
-  onChange={(e) => {
-    let val = parseInt(e.target.value);
-    
-    // 🧲 Effetto magnetico: se sei vicino al 100%, snap a 100
-    if (val >= 99.5 && val <= 100.5) {
-      val = 100;
-    }
-    
-    setPhasePercentages({A: val, B: val, C: val, D: val});
-    
-    // Applica immediatamente il playbackRate se audio è in preview
-    if (audioRef.current && isPreviewPlaying) {
-      audioRef.current.playbackRate = val / 100;
-    }
-  }} 
-  className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#5dda9d]" 
-/>
-    
-  
-  <div className="flex justify-between text-[9px] uppercase tracking-widest text-neutral-600 font-bold">
-    <span>Slow</span>
-    <span>Normal</span>
-    <span>Fast</span>
-  </div>
-</div>
-                {/* Pitch Control */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs uppercase tracking-wider text-neutral-400">Tonalità (Pitch)</label>
-                    <span className="text-lg font-bold text-purple-300">{pendingPitch > 0 ? '+' : ''}{pendingPitch} semitoni</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="-12" 
-                    max="12" 
-                    value={pendingPitch} 
-                    onChange={(e) => setPendingPitch(parseInt(e.target.value))} 
-                    className="w-full accent-purple-500 h-2"
-                  />
-                  {pendingPitch !== pitchShift && (
-                    <button 
-                      onClick={async () => { 
-                        setPitchShift(pendingPitch); 
-                        await applyPitchShift(pendingPitch); 
-                      }} 
-                      className="mt-3 w-full py-2.5 rounded-lg bg-purple-500 text-white font-bold text-sm hover:bg-purple-600 transition"
-                    >
-                      🎵 Applica Modifica Tonalità
-                    </button>
-                  )}
-                </div>
-
-                {/* Volume Controls */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs uppercase tracking-wider text-neutral-400 mb-2 block">Volume Traccia</label>
-                    <input 
-                      type="range" 
-                      min="0" 
-                      max="1" 
-                      step="0.01" 
-                      value={audioVolume} 
-                      onChange={(e) => setAudioVolume(parseFloat(e.target.value))} 
-                      className="w-full accent-emerald-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs uppercase tracking-wider text-neutral-400 mb-2 block">Volume Click (solo 100% velocità)</label>
-                    <input 
-                      type="range" 
-                      min="0" 
-                      max="1" 
-                      step="0.01" 
-                      value={clickVolume} 
-                      onChange={(e) => setClickVolume(parseFloat(e.target.value))} 
-                      className="w-full accent-blue-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Play Button */}
-                <button 
-                  onClick={handlePreview} 
-                  className={`w-full py-4 rounded-xl text-xl font-bold transition shadow-lg ${
-                    isPreviewPlaying 
-                      ? 'bg-red-700 hover:bg-red-600 text-white' 
-                      : 'bg-emerald-800 hover:bg-emerald-600 text-white'
-                  }`}
-                >
-                  {isPreviewPlaying ? '⏸ Stop' : '> Play'}
-                </button>
-
-                {/* Change File Button */}
-                <label className="block w-full cursor-pointer">
-                  <div className="w-full py-3 rounded-xl border-2 border-white/20 bg-white/5 text-center font-semibold text-neutral-300 hover:bg-white/10 transition">
-                    📁 Load File
-                  </div>
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-            </div>
-          </motion.div>
-        )}
-
-        {!audioFile && !isEasyMode ? (
+        {!audioFile ? (
           <motion.div
             variants={scaleIn}
             initial="hidden"
@@ -2440,7 +2162,7 @@ const currentProgressWidth = isRunning && totalReps > 0 ? (elapsedReps / totalRe
 </div>
           </motion.div>
           
-        ) : !isEasyMode ? (
+        ) : (
           <div className="mt-14 space-y-8">
          <motion.div 
   variants={fadeUp}
@@ -3656,15 +3378,15 @@ const getPreviewGradientColor = () => {
               </div>
             </div>
           </div>
-        ) : null}
+        )}
         
         {/* MODAL IMPORT PLAYLIST */}
 {showImportModal && (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-      <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0d0e] p-8 shadow-2xl">
-        <h2 className="mb-6 text-2xl font-semibold">
-          Importa Playlist: <span className="text-[#5dda9d]">{sessionName}</span>
-        </h2>
+    <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0d0e] p-8 shadow-2xl">
+      <h2 className="mb-6 text-2xl font-semibold">
+        📋 Importa Playlist: <span className="text-[#5dda9d]">{sessionName}</span>
+      </h2>
       
       <div className="mb-6 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
         <p className="text-sm text-blue-300">
@@ -3817,7 +3539,6 @@ const getPreviewGradientColor = () => {
 )}
         
          {/* INSERISCI IL FOOTER QUI */}
-
         <footer className="mt-16 border-t border-white/10 pt-8 pb-4">
           <div className="space-y-6">
             <div className="text-center space-y-2">
